@@ -11,6 +11,27 @@ log_ts() { date "+%Y-%m-%d %H:%M:%S"; }
 
 uci_get() { uci -q get "${UCI_NS}.main.$1" 2>/dev/null || true; }
 
+validate_base_dir() {
+	local dir="$1"
+	dir="$(printf "%s" "$dir" | sed 's/[[:space:]]*$//')"
+	dir="${dir%/}"
+	[ -n "$dir" ] || return 1
+	case "$dir" in
+		/*) ;;
+		*) return 1 ;;
+	esac
+	[ "$dir" != "/" ] || return 1
+	case "$dir" in
+		*"/../"*|*"/.."|*"/./"*|*"/.") return 1 ;;
+	esac
+	case "$dir" in
+		/bin|/bin/*|/sbin|/sbin/*|/lib|/lib/*|/usr|/usr/*|/etc|/etc/*|/proc|/proc/*|/sys|/sys/*|/dev|/dev/*|/run|/run/*|/tmp|/tmp/*|/var|/var/*|/overlay|/overlay/*|/rom|/rom/*)
+			return 1
+			;;
+	esac
+	return 0
+}
+
 uci_get_list() {
 	local key="$1"
 	uci -q show "${UCI_NS}.main.${key}" 2>/dev/null | \
@@ -120,6 +141,7 @@ default_gateway() {
 
 ensure_dirs() {
 	mkdir -p "$BASE_DIR" "$NODE_DIR" "$GLOBAL_DIR" "$DATA_DIR/.openclaw/workspace" "$BASE_DIR/npm-cache" 2>/dev/null || true
+	printf "%s\n" "managed-by=openclawmgr" >"${BASE_DIR}/.openclawmgr.managed" 2>/dev/null || true
 	fix_data_permissions || true
 }
 
@@ -359,6 +381,31 @@ openclaw_version() {
 	sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$pkg" 2>/dev/null | head -n 1
 }
 
+local_openclaw_version() {
+	[ -x "$NPM_BIN" ] || return 0
+	HOME="$DATA_DIR" npm_config_cache="${BASE_DIR}/npm-cache" \
+		PATH="${NODE_DIR}/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+		"$NPM_BIN" list -g openclaw --prefix="$GLOBAL_DIR" --depth=0 --json 2>/dev/null \
+		| "$NODE_BIN" -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{let o=JSON.parse(s||"{}");let v=o&&o.dependencies&&o.dependencies.openclaw&&o.dependencies.openclaw.version;if(v)process.stdout.write(String(v));}catch(_){}})'
+}
+
+latest_openclaw_version() {
+	local npm_registry=""
+	[ -x "$NPM_BIN" ] || return 0
+	if [ "${INSTALL_ACCELERATED:-1}" = "1" ]; then
+		npm_registry="https://registry.npmmirror.com"
+	fi
+	if [ -n "$npm_registry" ]; then
+		HOME="$DATA_DIR" npm_config_cache="${BASE_DIR}/npm-cache" npm_config_registry="$npm_registry" \
+			PATH="${NODE_DIR}/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+			"$NPM_BIN" view openclaw version 2>/dev/null | tr -d '\r' | head -n 1
+	else
+		HOME="$DATA_DIR" npm_config_cache="${BASE_DIR}/npm-cache" \
+			PATH="${NODE_DIR}/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+			"$NPM_BIN" view openclaw version 2>/dev/null | tr -d '\r' | head -n 1
+	fi
+}
+
 have_openclaw_runtime() {
 	[ -x "$NODE_BIN" ] || return 1
 	find_entry >/dev/null 2>&1 || return 1
@@ -537,15 +584,14 @@ if selected_env_key and selected_api_key ~= "" then
 end
 cfg.env = next(env) and env or nil
 
-local models = {}
-models.mode = "merge"
-local providers = {}
-models.providers = providers
-cfg.models = models
+	local models = ensure_table(cfg, "models")
+	if type(models.mode) ~= "string" or models.mode == "" then
+		models.mode = "merge"
+	end
+	local providers = ensure_table(models, "providers")
 
-local current_provider_id = os.getenv("DEFAULT_AGENT_NAME") or "anthropic"
-local current_provider = {}
-providers[current_provider_id] = current_provider
+	local current_provider_id = os.getenv("DEFAULT_AGENT_NAME") or "anthropic"
+	local current_provider = ensure_table(providers, current_provider_id)
 
 if current_provider_id == "openai" then
 	current_provider.api = "openai-completions"
@@ -578,13 +624,30 @@ elseif current_provider_id == "moonshot" then
 	}
 end
 
-local override_base = os.getenv("DEFAULT_AGENT_OVERRIDE_BASE_URL") or ""
-local base_url_mode = os.getenv("DEFAULT_AGENT_BASE_URL_MODE") or "default"
-if base_url_mode == "override" and override_base ~= "" then
-	current_provider.baseUrl = override_base
-elseif base_url_mode == "default" then
-	current_provider.baseUrl = os.getenv("DEFAULT_AGENT_BASE_URL") or current_provider.baseUrl
-end
+	local override_base = os.getenv("DEFAULT_AGENT_OVERRIDE_BASE_URL") or ""
+	local base_url_mode = os.getenv("DEFAULT_AGENT_BASE_URL_MODE") or "default"
+	if base_url_mode == "override" and override_base ~= "" then
+		current_provider.baseUrl = override_base
+	elseif base_url_mode == "default" then
+		current_provider.baseUrl = os.getenv("DEFAULT_AGENT_BASE_URL") or current_provider.baseUrl
+	end
+
+	-- luci.jsonc encodes empty Lua tables as JSON arrays ([]). To avoid producing
+	-- invalid provider entries like {"deepseek/deepseek-chat":[]}, drop provider
+	-- records that are empty or look like a provider/model string.
+	do
+		local to_del = {}
+		for k, v in pairs(providers) do
+			if type(k) == "string" and k:find("/", 1, true) then
+				table.insert(to_del, k)
+			elseif type(v) == "table" and next(v) == nil then
+				table.insert(to_del, k)
+			end
+		end
+		for _, k in ipairs(to_del) do
+			providers[k] = nil
+		end
+	end
 
 local agents = ensure_table(cfg, "agents")
 local defaults = ensure_table(agents, "defaults")
@@ -883,6 +946,47 @@ install_openclaw() {
 		return 0
 	}
 
+upgrade_openclaw() {
+	local was_running=0
+	local st=""
+
+	if ! have_openclaw_runtime; then
+		write_installer_log "OpenClaw is not installed yet; fallback to fresh install."
+		install_openclaw
+		return $?
+	fi
+
+	st="$(do_status 2>/dev/null || true)"
+	if [ "$st" = "running" ]; then
+		was_running=1
+		write_installer_log "Stopping OpenClaw service before update"
+		/etc/init.d/openclawmgr stop >/dev/null 2>&1 || true
+	fi
+
+	write_installer_log "Updating OpenClaw via npm"
+	write_installer_log "Current version: $(openclaw_version || echo unknown)"
+	if ! install_openclaw; then
+		write_installer_log "npm update failed"
+		if [ "$was_running" = "1" ] || [ "${ENABLED:-0}" = "1" ]; then
+			write_installer_log "Trying to restore service after failed update"
+			/etc/init.d/openclawmgr start >/dev/null 2>&1 || true
+		fi
+		return 1
+	fi
+
+	ensure_gateway_config || true
+	fix_data_permissions || true
+
+	if [ "$was_running" = "1" ] || [ "${ENABLED:-0}" = "1" ]; then
+		ensure_safe_port_for_start || return 1
+		write_installer_log "Restarting OpenClaw service after update"
+		/etc/init.d/openclawmgr restart >/dev/null 2>&1 || /etc/init.d/openclawmgr start >/dev/null 2>&1 || true
+	fi
+
+	write_installer_log "OpenClaw updated: $(openclaw_version || echo unknown)"
+	return 0
+}
+
 	do_install() {
 		acquire_lock
 		write_installer_log "== install begin =="
@@ -900,6 +1004,11 @@ install_openclaw() {
 		ensure_gateway_config || true
 
 		if have_openclaw_runtime; then
+			if [ "$ACTION" = "upgrade" ]; then
+				write_installer_log "OpenClaw is already installed: $(openclaw_version || echo unknown)"
+				upgrade_openclaw
+				return $?
+			fi
 			write_installer_log "OpenClaw is already installed: $(openclaw_version || echo unknown)"
 			write_installer_log "Skip install. Use restart/apply config if you only need to refresh configuration."
 			return 0
@@ -917,6 +1026,7 @@ install_openclaw() {
 		fix_data_permissions || true
 		# Do not auto-enable/start on first install; let user Save & Apply after choosing base_dir and settings.
 		if [ "${ENABLED:-0}" = "1" ]; then
+			ensure_safe_port_for_start || return 1
 			/etc/init.d/openclawmgr enable >/dev/null 2>&1 || true
 			/etc/init.d/openclawmgr restart >/dev/null 2>&1 || true
 		fi
@@ -955,8 +1065,15 @@ do_purge() {
 	/etc/init.d/openclawmgr stop >/dev/null 2>&1 || true
 	/etc/init.d/openclawmgr disable >/dev/null 2>&1 || true
 	uci -q set "${UCI_NS}.main.enabled=0" && uci -q commit "$UCI_NS" || true
-	rm -rf "$BASE_DIR" 2>/dev/null || true
-	write_installer_log "Base dir removed: $BASE_DIR"
+	# Safety: only remove the whole base_dir when it looks like a dedicated OpenClawMgr directory.
+	# Otherwise, only remove managed subdirectories to avoid accidental system wipe.
+	if [ -f "${BASE_DIR}/.openclawmgr.managed" ] || [ "$(basename "$BASE_DIR" 2>/dev/null || echo "")" = "OpenClawMgr" ]; then
+		rm -rf "$BASE_DIR" 2>/dev/null || true
+		write_installer_log "Base dir removed: $BASE_DIR"
+	else
+		rm -rf "$NODE_DIR" "$GLOBAL_DIR" "$DATA_DIR" "$BASE_DIR/npm-cache" "${BASE_DIR}/.openclawmgr.managed" 2>/dev/null || true
+		write_installer_log "Base dir kept (safety). Removed: node/global/data/npm-cache under $BASE_DIR"
+	fi
 	write_installer_log "== purge done =="
 }
 
@@ -965,6 +1082,7 @@ do_start() {
 	write_installer_log "== start begin =="
 	ensure_dirs
 	fix_data_permissions || true
+	ensure_safe_port_for_start || exit 1
 	/etc/init.d/openclawmgr enable >/dev/null 2>&1 || true
 	uci -q set "${UCI_NS}.main.enabled=1" && uci -q commit "$UCI_NS" || true
 	ensure_gateway_config || true
@@ -986,6 +1104,7 @@ do_restart() {
 	write_installer_log "== restart begin =="
 	ensure_dirs
 	fix_data_permissions || true
+	ensure_safe_port_for_start || exit 1
 	ensure_gateway_config || true
 	/etc/init.d/openclawmgr restart >/dev/null 2>&1 || true
 	write_installer_log "== restart done =="
@@ -1001,6 +1120,7 @@ do_restart() {
 		local pid=""
 		pid="$(ubus call service list "{\"name\":\"openclawmgr\"}" 2>/dev/null | jsonfilter -e '$.openclawmgr.instances.gateway.pid' 2>/dev/null || true)"
 		if [ "${ENABLED:-0}" = "1" ]; then
+			ensure_safe_port_for_start || exit 1
 			/etc/init.d/openclawmgr enable >/dev/null 2>&1 || true
 			if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
 				/etc/init.d/openclawmgr restart >/dev/null 2>&1 || true
@@ -1165,6 +1285,9 @@ NODE_VERSION="24.14.0"
 case "$PORT" in
 	''|*[!0-9]*) PORT="18789" ;;
 esac
+if [ "$PORT" -lt 1 ] 2>/dev/null || [ "$PORT" -gt 65535 ] 2>/dev/null; then
+	PORT="18789"
+fi
 case "$BIND" in
 	loopback|lan|auto|tailnet|custom) ;;
 	*) BIND="lan" ;;
@@ -1195,6 +1318,22 @@ require_base_dir() {
 		write_installer_log "base_dir is not configured; please choose a data directory in LuCI and Save & Apply, then retry."
 		exit 2
 	fi
+	if ! validate_base_dir "$BASE_DIR"; then
+		write_installer_log "Refusing to operate on unsafe base_dir: $BASE_DIR"
+		write_installer_log "Fix: choose a dedicated directory like /root/Configs/OpenClawMgr or /mnt/.../OpenClawMgr"
+		exit 2
+	fi
+}
+
+ensure_safe_port_for_start() {
+	case "$PORT" in
+		''|*[!0-9]*) return 1 ;;
+	esac
+	if [ "$PORT" -le 1024 ] 2>/dev/null; then
+		write_installer_log "Refusing to start with unsafe port $PORT (must be >1024)."
+		return 1
+	fi
+	return 0
 }
 
 NODE_DIR="${BASE_DIR}/node"
@@ -1257,6 +1396,12 @@ case "$ACTION" in
 	openclaw_version)
 		openclaw_version
 		;;
+	local_openclaw_version)
+		local_openclaw_version
+		;;
+	latest_openclaw_version)
+		latest_openclaw_version
+		;;
 	diag)
 		diag_run "${1:-}" "${2:-}"
 		;;
@@ -1264,7 +1409,7 @@ case "$ACTION" in
 		diag_poll "${1:-}"
 		;;
 	*)
-		echo "Usage: $0 {install|upgrade|uninstall|uninstall_openclaw|purge|rm|start|stop|restart|status|port|token|node_version|openclaw_version|diag|diag_poll}" >&2
+		echo "Usage: $0 {install|upgrade|uninstall|uninstall_openclaw|purge|rm|start|stop|restart|status|port|token|node_version|openclaw_version|local_openclaw_version|latest_openclaw_version|diag|diag_poll}" >&2
 		exit 1
 		;;
 esac
