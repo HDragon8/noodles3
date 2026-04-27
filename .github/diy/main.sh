@@ -250,6 +250,7 @@ rm -rf autosamba
 rm -rf e2guardian
 rm -rf luci-app-cshark
 rm -rf luci-app-docker
+rm -rf upx-static
 
 sed -i 's/PKG_VERSION:=20240302/PKG_VERSION:=20240223/g; s/PKG_RELEASE:=$(AUTORELESE)/PKG_RELEASE:=1/g' webd/Makefile
 sed -i 's/luci-lib-ipkg/luci-base/g' luci-app-store/Makefile
