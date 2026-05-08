@@ -124,6 +124,8 @@ function gen_outbound(flag, node, tag, proxy_table)
 			tag = tag .. ":" .. remarks
 		end
 
+		node.address = (node.address or ""):lower()
+
 		result = {
 			_id = node_id,
 			_flag = flag,
@@ -408,9 +410,9 @@ function gen_outbound(flag, node, tag, proxy_table)
 			local config_address
 			local config_port
 			if dns_proto == "https" then
-				local _a = api.parseURL(node.domain_resolver_dns_https)
+				local _a = api.parseDoH(node.domain_resolver_dns_https)
 				if _a then
-					config_address = node.domain_resolver_dns_https
+					config_address = _a.url
 					config_port = _a.port or 443
 					if _a.hostname and api.datatypes.hostname(_a.hostname) then
 						GLOBAL.DNS_HOSTNAME[_a.hostname] = true
@@ -458,14 +460,14 @@ function gen_config_server(node)
 	local settings = nil
 	local routing = nil
 	local outbounds = {
-		{ protocol = "freedom", tag = "direct" }, { protocol = "blackhole", tag = "blocked" }
+		{ protocol = "freedom", tag = "direct", settings = { finalRules = {{ action = "allow" }}}}, { protocol = "blackhole", tag = "blocked" }
 	}
 
 	if node.protocol == "vmess" or node.protocol == "vless" then
 		if node.uuid then
-			local clients = {}
+			local users = {}
 			for i = 1, #node.uuid do
-				clients[i] = {
+				users[i] = {
 					id = node.uuid[i],
 					flow = (node.protocol == "vless"
 					and (node.tls == "1" or (node.decryption and node.decryption ~= "" and node.decryption ~= "none")) 
@@ -473,7 +475,7 @@ function gen_config_server(node)
 				}
 			end
 			settings = {
-				clients = clients,
+				users = users,
 				decryption = (node.protocol == "vless") and ((node.decryption and node.decryption ~= "") and node.decryption or "none") or nil
 			}
 		end
@@ -481,7 +483,7 @@ function gen_config_server(node)
 		settings = {
 			udp = ("1" == node.udp_forward) and true or false,
 			auth = ("1" == node.auth) and "password" or "noauth",
-			accounts = ("1" == node.auth) and {
+			users = ("1" == node.auth) and {
 				{
 					user = node.username,
 					pass = node.password
@@ -491,7 +493,7 @@ function gen_config_server(node)
 	elseif node.protocol == "http" then
 		settings = {
 			allowTransparent = false,
-			accounts = ("1" == node.auth) and {
+			users = ("1" == node.auth) and {
 				{
 					user = node.username,
 					pass = node.password
@@ -509,20 +511,20 @@ function gen_config_server(node)
 		}
 	elseif node.protocol == "trojan" then
 		if node.uuid then
-			local clients = {}
+			local users = {}
 			for i = 1, #node.uuid do
-				clients[i] = {
+				users[i] = {
 					password = node.uuid[i],
 				}
 			end
 			settings = {
-				clients = clients
+				users = users
 			}
 		end
 	elseif node.protocol == "hysteria2" then
 		settings = {
 			version = 2,
-			clients = node.hysteria2_auth_password and {
+			users = node.hysteria2_auth_password and {
 				{ auth = node.hysteria2_auth_password }
 			}
 		}
@@ -580,6 +582,9 @@ function gen_config_server(node)
 						mark = 255,
 						interface = node.outbound_node_iface
 					}
+				},
+				settings = {
+					finalRules = {{ action = "allow" }}
 				}
 			}
 			sys.call(string.format("mkdir -p %s && touch %s/%s", api.TMP_IFACE_PATH, api.TMP_IFACE_PATH, node.outbound_node_iface))
@@ -801,10 +806,7 @@ function gen_config(var)
 	local remote_dns_udp_port = var["remote_dns_udp_port"]
 	local remote_dns_tcp_server = var["remote_dns_tcp_server"]
 	local remote_dns_tcp_port = var["remote_dns_tcp_port"]
-	local remote_dns_doh_url = var["remote_dns_doh_url"]
-	local remote_dns_doh_host = var["remote_dns_doh_host"]
-	local remote_dns_doh_ip = var["remote_dns_doh_ip"]
-	local remote_dns_doh_port = var["remote_dns_doh_port"]
+	local remote_dns_doh = var["remote_dns_doh"]
 	local remote_dns_client_ip = var["remote_dns_client_ip"]
 	local remote_dns_fake = var["remote_dns_fake"]
 	local remote_dns_query_strategy = var["remote_dns_query_strategy"]
@@ -886,7 +888,7 @@ function gen_config(var)
 			end
 			if local_socks_username and local_socks_password and local_socks_username ~= "" and local_socks_password ~= "" then
 				inbound.settings.auth = "password"
-				inbound.settings.accounts = {
+				inbound.settings.users = {
 					{
 						user = local_socks_username,
 						pass = local_socks_password
@@ -903,7 +905,7 @@ function gen_config(var)
 				settings = {allowTransparent = false}
 			}
 			if local_http_username and local_http_password and local_http_username ~= "" and local_http_password ~= "" then
-				inbound.settings.accounts = {
+				inbound.settings.users = {
 					{
 						user = local_http_username,
 						pass = local_http_password
@@ -1010,7 +1012,7 @@ function gen_config(var)
 				blc_nodes = _node.balancing_node
 			end
 			local valid_nodes = {}
-			for i = 1, #blc_nodes do
+			for i = 1, #(blc_nodes or {}) do
 				local blc_node_id = blc_nodes[i]
 				local blc_node_tag = "blc-" .. blc_node_id
 				local is_new_blc_node = true
@@ -1239,6 +1241,9 @@ function gen_config(var)
 									mark = 255,
 									interface = node.iface
 								}
+							},
+							settings = {
+								finalRules = {{ action = "allow" }}
 							}
 						}
 						sys.call(string.format("mkdir -p %s && touch %s/%s", api.TMP_IFACE_PATH, api.TMP_IFACE_PATH, node.iface))
@@ -1497,7 +1502,7 @@ function gen_config(var)
 		})
 	end
 
-	if (remote_dns_udp_server and remote_dns_udp_port) or (remote_dns_tcp_server and remote_dns_tcp_port) or remote_dns_doh_url or #node_dns > 0 then
+	if (remote_dns_udp_server and remote_dns_udp_port) or (remote_dns_tcp_server and remote_dns_tcp_port) or remote_dns_doh or #node_dns > 0 then
 		if not routing then
 			routing = {
 				domainStrategy = "IPOnDemand",
@@ -1542,6 +1547,7 @@ function gen_config(var)
 			local domain = {}
 			local nodes_domain_text = sys.exec([[uci show passwall | sed -n "s/.*\.\(address\|download_address\)='\([^']*\)'/\2/p" | sort -u]])
 			string.gsub(nodes_domain_text, '[^' .. "\r\n" .. ']+', function(w)
+				w = (w or ""):lower()
 				if not api.vps_domain_exclude(w) and api.datatypes.hostname(w) and not GLOBAL.VPS_EXCLUDE[w] then
 					table.insert(domain, "full:" .. w)
 				end
@@ -1560,22 +1566,24 @@ function gen_config(var)
 		if remote_dns_udp_server then
 			_remote_dns.address = remote_dns_udp_server
 			_remote_dns.port = tonumber(remote_dns_udp_port) or 53
+
 		elseif remote_dns_tcp_server then
 			_remote_dns.address = "tcp://" .. remote_dns_tcp_server .. ":" .. tonumber(remote_dns_tcp_port) or 53
-		end
 
-		local _remote_dns_host
-		if remote_dns_doh_url and remote_dns_doh_host then
-			if api.datatypes.hostname(remote_dns_doh_host) then
-				if remote_dns_doh_ip and remote_dns_doh_host ~= remote_dns_doh_ip and api.is_ip(remote_dns_doh_ip) then
-					dns.hosts[remote_dns_doh_host] = remote_dns_doh_ip
-					_remote_dns_host = remote_dns_doh_host
-				else
-					GLOBAL.DNS_HOSTNAME[remote_dns_doh_host] = true
+		elseif remote_dns_doh then
+			local _a = api.parseDoH(remote_dns_doh)
+			if _a then
+				_remote_dns.address = _a.url
+				_remote_dns.port = _a.port or 443
+
+				if api.datatypes.hostname(_a.hostname) then
+					if _a.hostip then
+						dns.hosts[_a.hostname] = _a.hostip
+					else
+						GLOBAL.DNS_HOSTNAME[_a.hostname] = true
+					end
 				end
 			end
-			_remote_dns.address = remote_dns_doh_url
-			_remote_dns.port = tonumber(remote_dns_doh_port)
 		end
 
 		if next(_remote_dns) then
@@ -1635,14 +1643,13 @@ function gen_config(var)
 				}
 			})
 		else
-			if COMMON.default_balancer_tag then
-				dns_outbound_tag = nil
-			elseif COMMON.default_outbound_tag then
+			if COMMON.default_outbound_tag then
 				dns_outbound_tag = COMMON.default_outbound_tag
 			end
 		end
 
 		local dns_rule_position = 1
+		local remote_dns_outbound
 		if dns_listen_port then
 			table.insert(inbounds, {
 				listen = "127.0.0.1",
@@ -1655,14 +1662,22 @@ function gen_config(var)
 				}
 			})
 
-			table.insert(outbounds, {
+			-- remote dns outbound
+			local chn_list = uci:get(appname, "@global[0]", "chn_list") or "direct"
+			remote_dns_outbound = {
 				tag = "dns-out",
 				protocol = "dns",
+				proxySettings = dns_outbound_tag and {
+					tag = (dns_outbound_tag ~= "blackhole") and dns_outbound_tag or "direct"
+				} or nil,
 				settings = {
+					address = (chn_list ~= "proxy") and "8.8.8.8" or "223.5.5.5",
+					port = 53,
+					network = "tcp",
 					nonIPQuery = (api.compare_versions(xray_version, "<", "26.4.25")) and "reject" or nil, -- Todo is to remove it
-					rules = (api.compare_versions(xray_version, ">", "26.4.17")) and {{ action = "hijack" }} or nil
+					rules = (api.compare_versions(xray_version, ">", "26.4.17")) and {} or nil
 				}
-			})
+			}
 
 			table.insert(routing.rules, 1, {
 				inboundTag = {
@@ -1686,6 +1701,7 @@ function gen_config(var)
 		end
 
 		--按分流顺序DNS
+		local remote_dns_out_rules = {}
 		if dns_domain_rules and #dns_domain_rules > 0 then
 			for index, value in ipairs(dns_domain_rules) do
 				if value.domain and value.outboundTag then
@@ -1716,6 +1732,21 @@ function gen_config(var)
 						dns_server = nil
 					end
 					]]--
+
+					-- remote dns outbound rules
+					if value.outboundTag == "blackhole" then
+						table.insert(remote_dns_out_rules, {
+							action = "reject",
+							domain = api.clone(value.domain)
+						})
+					else
+						table.insert(remote_dns_out_rules, {
+							action = "hijack",
+							qtype = "1,28",
+							domain = api.clone(value.domain)
+						})
+					end
+
 					if dns_server then
 						--dns_server.finalQuery = true
 						dns_server.domains = value.domain
@@ -1771,6 +1802,21 @@ function gen_config(var)
 
 		if dns_hosts_len == 0 then
 			dns.hosts = nil
+		end
+
+		-- remote dns outbound
+		if remote_dns_outbound then
+			if remote_dns_outbound.settings.rules then
+				table.insert(remote_dns_out_rules, {
+					action = "hijack",
+					qtype = "1,28"
+				})
+				table.insert(remote_dns_out_rules, {
+					action = "direct"
+				})
+				remote_dns_outbound.settings.rules = remote_dns_out_rules
+			end
+			table.insert(outbounds, remote_dns_outbound)
 		end
 
 		-- 自定义节点 DNS
@@ -1846,7 +1892,8 @@ function gen_config(var)
 			protocol = "freedom",
 			tag = "direct",
 			settings = {
-				domainStrategy = (direct_dns_query_strategy and direct_dns_query_strategy ~= "") and direct_dns_query_strategy or "UseIP"
+				domainStrategy = (direct_dns_query_strategy and direct_dns_query_strategy ~= "") and direct_dns_query_strategy or "UseIP",
+				finalRules = (api.compare_versions(xray_version, ">", "26.4.25")) and {{ action = "allow" }} or nil  -- Todo: Remove version check
 			},
 			streamSettings = {
 				sockopt = {
@@ -1916,7 +1963,7 @@ function gen_proto_config(var)
 		}
 		if local_socks_username and local_socks_password and local_socks_username ~= "" and local_socks_password ~= "" then
 			inbound.settings.auth = "password"
-			inbound.settings.accounts = {
+			inbound.settings.users = {
 				{
 					user = local_socks_username,
 					pass = local_socks_password
@@ -1936,7 +1983,7 @@ function gen_proto_config(var)
 			}
 		}
 		if local_http_username and local_http_password and local_http_username ~= "" and local_http_password ~= "" then
-			inbound.settings.accounts = {
+			inbound.settings.users = {
 				{
 					user = local_http_username,
 					pass = local_http_password
@@ -1973,7 +2020,7 @@ function gen_proto_config(var)
 
 	-- 额外传出连接
 	table.insert(outbounds, {
-		protocol = "freedom", tag = "direct", settings = {keep = ""}, sockopt = {mark = 255}
+		protocol = "freedom", tag = "direct", settings = {finalRules = {{ action = "allow" }}}, sockopt = {mark = 255}
 	})
 
 	local config = {
