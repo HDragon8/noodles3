@@ -775,6 +775,9 @@ function gen_config_server(node)
 				config.outbounds[index][k] = nil
 			end
 		end
+		if value.protocol == "freedom" and api.compare_versions(xray_version, "<", "26.5.3") then -- Todo is to remove it
+			value.settings = nil
+		end
 	end
 
 	return config
@@ -1011,6 +1014,9 @@ function gen_config(var)
 			else
 				blc_nodes = _node.balancing_node
 			end
+
+			api.log("  - 加载 Xray 负载均衡 节点【" .. (_node.remarks or "") .. "】，子节点数量：" .. #(blc_nodes or {}))
+
 			local valid_nodes = {}
 			for i = 1, #(blc_nodes or {}) do
 				local blc_node_id = blc_nodes[i]
@@ -1066,7 +1072,13 @@ function gen_config(var)
 					type = _node.balancingStrategy,
 					settings = {
 						expected = _node.expected and tonumber(_node.expected) and tonumber(_node.expected) or 2,
-						maxRTT = "1s"
+						maxRTT = "1s",
+						tolerance = (function(t)
+							t = tonumber(t) or 0
+							if t < 1 then return nil end
+							if t > 100 then t = 100 end
+							return t / 100
+						end)(_node.tolerance)
 					}
 				}
 			else
@@ -1194,6 +1206,11 @@ function gen_config(var)
 					end
 				end
 			end
+			if node.chain_proxy == "3" and node.outbound_iface then
+				if outbound.streamSettings and outbound.streamSettings.sockopt then
+					outbound.streamSettings.sockopt.interface = node.outbound_iface
+				end
+			end
 			return default_outTag, last_insert_outbound
 		end
 
@@ -1242,9 +1259,9 @@ function gen_config(var)
 									interface = node.iface
 								}
 							},
-							settings = {
+							settings = (api.compare_versions(xray_version, ">", "26.4.25")) and {  -- Todo: Remove version check
 								finalRules = {{ action = "allow" }}
-							}
+							} or nil
 						}
 						sys.call(string.format("mkdir -p %s && touch %s/%s", api.TMP_IFACE_PATH, api.TMP_IFACE_PATH, node.iface))
 					end
@@ -2020,7 +2037,12 @@ function gen_proto_config(var)
 
 	-- 额外传出连接
 	table.insert(outbounds, {
-		protocol = "freedom", tag = "direct", settings = {finalRules = {{ action = "allow" }}}, sockopt = {mark = 255}
+		protocol = "freedom",
+		tag = "direct",
+		settings = (api.compare_versions(xray_version, ">", "26.4.25")) and { -- Todo: Remove version check
+			finalRules = {{ action = "allow" }}
+		} or nil,
+		sockopt = {mark = 255}
 	})
 
 	local config = {
