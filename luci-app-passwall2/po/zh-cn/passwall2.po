@@ -1243,9 +1243,6 @@ msgstr "清空日志"
 msgid "Password"
 msgstr "密码"
 
-msgid "IV Check"
-msgstr "IV 检查"
-
 msgid "UDP over TCP"
 msgstr "TCP 封装 UDP"
 
@@ -1257,12 +1254,6 @@ msgstr "本地端口"
 
 msgid "Fast Open"
 msgstr "快速打开"
-
-msgid "Pre-connections"
-msgstr "预连接"
-
-msgid "Number of early established connections to reduce latency."
-msgstr "预连接的数量，用于降低延迟。"
 
 msgid "plugin"
 msgstr "插件"
@@ -1648,6 +1639,12 @@ msgstr "TLS 证书名称（CertName）"
 msgid "TLS is used to verify the leaf certificate name."
 msgstr "TLS 用于验证 leaf 证书的 name。"
 
+msgid "TLS Certificate (PEM)"
+msgstr "TLS 证书（PEM）"
+
+msgid "Full certificate (chain), PEM format."
+msgstr "完整证书（链），PEM 格式。"
+
 msgid "ECH Config"
 msgstr "ECH 配置"
 
@@ -1746,6 +1743,18 @@ msgstr "落地节点"
 
 msgid "Only support a layer of proxy."
 msgstr "仅支持一层代理。"
+
+msgid "Send HWID"
+msgstr "发送 HWID"
+
+msgid "Some subscription providers may require a hardware identifier (HWID) for authentication."
+msgstr "某些订阅服务提供商可能需要硬件标识符（HWID）进行身份验证。"
+
+msgid "Enabling this option will send a hashed HWID when updating subscriptions."
+msgstr "启用此选项后，在更新订阅时将发送经过哈希处理的 HWID。"
+
+msgid "This may reveal limited hardware information. Enable only if you trust your provider."
+msgstr "这可能会泄露有限的硬件信息。仅在信任您的服务提供商时启用。"
 
 msgid ""
 "Chained proxy works only with Xray or Sing-box nodes.<br>"
@@ -2267,8 +2276,8 @@ msgstr "跳过 %s 节点，因未适配到 %s 核心程序，或未正确设置�
 msgid "Skip node: %s. Because Sing-Box does not support the %s protocol's %s transmission method, Xray needs to be used instead."
 msgstr "跳过节点：%s，因 Sing-Box 不支持 %s 协议的 %s 传输方式，需更换 Xray。"
 
-msgid "Xray unsupport %s plugin."
-msgstr "Xray 不支持 %s 插件。"
+msgid "%s unsupport SS %s plugin."
+msgstr "%s 不支持 %s 插件。"
 
 msgid "Plugin options Incomplete."
 msgstr "插件选项不完整。"

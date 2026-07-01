@@ -734,7 +734,7 @@ filter_haproxy() {
 }
 
 filter_vpsip() {
-	local EXCLUDE_VPSIP="^(127\.0\.0\.1|1\.1\.1\.1|1\.1\.1\.2|8\.8\.8\.8|8\.8\.4\.4|9\.9\.9\.9)$"
+	local EXCLUDE_VPSIP="^(0\.0\.0\.0|127\.0\.0\.1|1\.1\.1\.1|1\.1\.1\.2|8\.8\.8\.8|8\.8\.4\.4|9\.9\.9\.9)$"
 	uci show $CONFIG | grep -E "(\.address=|\.download_address=)" | cut -d "'" -f 2 | grep -E "^([0-9]{1,3}\.){3}[0-9]{1,3}$" | grep -Ev "$EXCLUDE_VPSIP" | sed "s/^/add $IPSET_VPS /" | awk '1; END{print "COMMIT"}' | ipset -! -R
 	echolog "  - [$?]加入所有IPv4节点到ipset[$IPSET_VPS]直连完成"
 	uci show $CONFIG | grep -E "(\.address=|\.download_address=)" | cut -d "'" -f 2 | grep -E "([A-Fa-f0-9]{1,4}::?){1,7}[A-Fa-f0-9]{1,4}" | sed "s/^/add $IPSET_VPS6 /" | awk '1; END{print "COMMIT"}' | ipset -! -R
@@ -829,8 +829,19 @@ update_wan_sets() {
 	}
 }
 
+set_tproxy_sysctl() {
+	# Disable IPv4 rp_filter for TPROXY compatibility.
+	sysctl -w net.ipv4.conf.all.rp_filter=0 >/dev/null 2>&1
+	sysctl -w net.ipv4.conf.default.rp_filter=0 >/dev/null 2>&1
+	local f
+	for f in /proc/sys/net/ipv4/conf/*/rp_filter; do
+		echo 0 > "$f" 2>/dev/null
+	done
+}
+
 add_firewall_rule() {
 	echolog "开始加载 iptables 防火墙规则..."
+	set_tproxy_sysctl
 	ipset -! create $IPSET_LOCAL nethash maxelem 1048576
 	ipset -! create $IPSET_WAN nethash maxelem 1048576
 	ipset -! create $IPSET_LAN nethash maxelem 1048576

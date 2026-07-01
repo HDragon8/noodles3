@@ -1251,9 +1251,6 @@ msgstr "پاک کردن گزارش‌ها"
 msgid "Password"
 msgstr "رمز عبور"
 
-msgid "IV Check"
-msgstr "بررسی IV"
-
 msgid "UDP over TCP"
 msgstr "UDP بر روی TCP"
 
@@ -1265,12 +1262,6 @@ msgstr "پورت محلی"
 
 msgid "Fast Open"
 msgstr "بازگشایی سریع (Fast Open)"
-
-msgid "Pre-connections"
-msgstr "پیش‌اتصالات"
-
-msgid "Number of early established connections to reduce latency."
-msgstr "تعداد اتصالات از پیش برقرار شده برای کاهش تاخیر."
 
 msgid "plugin"
 msgstr "افزونه"
@@ -1656,6 +1647,12 @@ msgstr "نام گواهی TLS (CertName)"
 msgid "TLS is used to verify the leaf certificate name."
 msgstr "TLS برای تأیید نام گواهی برگ (Leaf Certificate) استفاده می‌شود."
 
+msgid "TLS Certificate (PEM)"
+msgstr "گواهی TLS (PEM)"
+
+msgid "Full certificate (chain), PEM format."
+msgstr "گواهی کامل (زنجیره‌ای)، فرمت PEM."
+
 msgid "ECH Config"
 msgstr "پیکربندی ECH"
 
@@ -1760,6 +1757,18 @@ msgstr "گره فرود (Landing Node)"
 
 msgid "Only support a layer of proxy."
 msgstr "فقط از یک لایه پروکسی پشتیبانی می‌کند."
+
+msgid "Send HWID"
+msgstr "ارسال HWID"
+
+msgid "Some subscription providers may require a hardware identifier (HWID) for authentication."
+msgstr "برخی ارائه‌دهندگان اشتراک ممکن است برای احراز هویت به شناسه سخت‌افزاری (HWID) نیاز داشته باشند."
+
+msgid "Enabling this option will send a hashed HWID when updating subscriptions."
+msgstr "با فعال کردن این گزینه، هنگام به‌روزرسانی اشتراک‌ها یک HWID هش‌شده ارسال خواهد شد."
+
+msgid "This may reveal limited hardware information. Enable only if you trust your provider."
+msgstr "این کار ممکن است بخشی از اطلاعات سخت‌افزاری دستگاه را آشکار کند. فقط در صورتی این گزینه را فعال کنید که به ارائه‌دهنده خود اعتماد دارید."
 
 msgid ""
 "Chained proxy works only with Xray or Sing-box nodes.<br>"
@@ -2281,8 +2290,8 @@ msgstr "نادیده گرفتن گره %s به دلیل ناسازگاری با 
 msgid "Skip node: %s. Because Sing-Box does not support the %s protocol's %s transmission method, Xray needs to be used instead."
 msgstr "صرف‌نظر از گره: %s. زیرا Sing-Box از روش انتقال %s پروتکل %s پشتیبانی نمی‌کند، باید به جای آن از Xray استفاده شود."
 
-msgid "Xray unsupport %s plugin."
-msgstr "Xray از افزونه %s پشتیبانی نمی‌کند."
+msgid "%s unsupport SS %s plugin."
+msgstr "%s از افزونه %s پشتیبانی نمی‌کند."
 
 msgid "Plugin options Incomplete."
 msgstr "گزینه‌های افزونه ناقص است."

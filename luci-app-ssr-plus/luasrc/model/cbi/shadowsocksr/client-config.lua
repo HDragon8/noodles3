@@ -75,6 +75,40 @@ local function base64Encode(text)
 	end
 end
 
+local function parse_realm_uri(uri)
+	uri = trim(uri)
+	if uri == "" then return nil end
+	-- realm[+http]://token@server/realm_id?query
+	local scheme = (uri:match("^realm%+http://") and "realm+http") or (uri:match("^realm://") and "realm")
+	if not scheme then return nil end
+	uri = uri:gsub("^realm%+http://", ""):gsub("^realm://", "")
+	local token, server_url, realm_id, query = uri:match("^([^@]+)@([^/]+)/([^?]*)%??(.*)$")
+	if not token or not server_url or not realm_id then return nil end
+	realm_id = realm_id:gsub("/+$", "")
+	local address, port = server_url:match("^%[([^%]]+)%]:(%d+)$") --ipv6:port
+	if not address then
+		address, port = server_url:match("^([^:]+):(%d+)$") --ipv4[domain]:port
+	end
+	address = address or server_url:match("^%[([^%]]+)%]$") or server_url
+	port = tonumber(port) or (scheme == "realm+http" and 80 or 443)
+	local realm = {
+		scheme = scheme,
+		token = token,
+		server_url = server_url,
+		address = address,
+		port = port,
+		realm_id = realm_id
+	}
+	-- 解析 query 中的 stun=
+	local stun_servers
+	for v in (query or ""):gmatch("[Ss][Tt][Uu][Nn]=([^&]+)") do
+		stun_servers = stun_servers or {}
+		stun_servers[#stun_servers + 1] = v
+	end
+	realm.stun_servers = stun_servers
+	return realm
+end
+
 -- 获取 Xray 版本号
 if is_finded("xray") then
 	local version = luci.sys.exec("xray version 2>&1")
@@ -321,6 +355,10 @@ m.on_after_save = function(self)
 	end
 end
 
+local server_header = Template("/shadowsocksr/server_header")
+server_header.section = sid
+m:append(server_header)
+
 -- [[ Servers Setting ]]--
 s = m:section(NamedSection, sid, "servers")
 s.anonymous = true
@@ -343,7 +381,7 @@ if has_mihomo then
 	o:value("ss", translate("ShadowSocks"))
 end
 if has_ss_rust then
-	o:value("ss-rust", translate("ShadowSocks"))
+	o:value("ss-rust", translate("ShadowSocks-Rust"))
 end
 if is_finded("naive") then
 	o:value("naiveproxy", translate("NaiveProxy"))
@@ -417,6 +455,9 @@ end
 if is_finded("xray") then
 	o:value("hysteria2", translate("Hysteria2"))
 end
+if is_finded("mihomo") then
+	o:value("snell", translate("Snell"))
+end
 o:value("socks", translate("Socks"))
 o:value("http", translate("HTTP"))
 o:depends("type", "v2ray")
@@ -427,13 +468,24 @@ o.rmempty = false
 o:depends("type", "ssr")
 o:depends("type", "ss")
 o:depends("type", "ss-rust")
-o:depends("type", "v2ray")
 o:depends("type", "trojan")
 o:depends("type", "naiveproxy")
 o:depends("type", "hysteria2")
 o:depends("type", "tuic")
 o:depends("type", "shadowtls")
 o:depends("type", "socks5")
+local protocols = s.fields["v2ray_protocol"].keylist
+if protocols and type(protocols) == "table" and #protocols > 0 then
+	for _, proto in ipairs(protocols) do
+		if not proto:find("^_") then
+			if proto == "hysteria2" then
+				o:depends({type = "v2ray", v2ray_protocol = "hysteria2", hysteria2_realms = false})
+			else
+				o:depends({type = "v2ray", v2ray_protocol = proto})
+			end
+		end
+	end
+end
 
 o = s:option(Value, "server_port", translate("Server Port"))
 o.datatype = "port"
@@ -441,13 +493,24 @@ o.rmempty = true
 o:depends("type", "ssr")
 o:depends("type", "ss")
 o:depends("type", "ss-rust")
-o:depends("type", "v2ray")
 o:depends("type", "trojan")
 o:depends("type", "naiveproxy")
 o:depends("type", "hysteria2")
 o:depends("type", "tuic")
 o:depends("type", "shadowtls")
 o:depends("type", "socks5")
+local protocols = s.fields["v2ray_protocol"].keylist
+if protocols and type(protocols) == "table" and #protocols > 0 then
+	for _, proto in ipairs(protocols) do
+		if not proto:find("^_") then
+			if proto == "hysteria2" then
+				o:depends({type = "v2ray", v2ray_protocol = "hysteria2", hysteria2_realms = false})
+			else
+				o:depends({type = "v2ray", v2ray_protocol = proto})
+			end
+		end
+	end
+end
 
 o = s:option(Flag, "auth_enable", translate("Enable Authentication"))
 o.rmempty = false
@@ -477,6 +540,11 @@ o:depends({type = "v2ray", v2ray_protocol = "http", auth_enable = true})
 o:depends({type = "v2ray", v2ray_protocol = "socks", socks_ver = "5", auth_enable = true})
 o:depends({type = "v2ray", v2ray_protocol = "shadowsocks"})
 o:depends({type = "v2ray", v2ray_protocol = "trojan"})
+
+o = s:option(Value, "snell_psk", translate("Snell PSK"))
+o.password = true
+o.rmempty = true
+o:depends({type = "v2ray", v2ray_protocol = "snell"})
 
 o = s:option(ListValue, "encrypt_method", translate("Encrypt Method"))
 for _, v in ipairs(encrypt_methods) do
@@ -533,7 +601,7 @@ if is_finded("xray-plugin") then
 	o:value("xray-plugin", translate("xray-plugin"))
 end
 if has_mihomo or is_finded("shadow-tls") then
-	o:value("shadow-tls", translate("shadow-tls"))
+	o:value("shadow-tls", translate("Shadow-TLS"))
 end
 if has_mihomo then
 	o:value("restls", translate("restls"))
@@ -573,6 +641,27 @@ o:depends("type", "ssr")
 
 
 -- [[ Hysteria2 ]]--
+o = s:option(Flag, "hysteria2_realms", translate("Hysteria2 Realms"))
+o.default = "0"
+if xray_version_val > 260509 then
+	o:depends({type = "v2ray", v2ray_protocol = "hysteria2"})
+else
+	o:depends({type = "v2ray", v2ray_protocol = "__hide"})
+end
+
+o = s:option(Value, "hysteria2_realm_url", translate("Realm URL"), translate("Example:") .. "realm://public@realm.hy2.io/your-realm-name")
+o:depends("hysteria2_realms", true)
+o.validate = function(self, value)
+	value = trim(value)
+	local realm = parse_realm_uri(value)
+	if realm then return value end
+	return nil, translate("Invalid Realm URL.")
+end
+
+o = s:option(DynamicList, "hysteria2_realm_stun", translate("Realm STUN"))
+o.default = { "stun.sip.us:3478", "stun.nextcloud.com:3478", "global.stun.twilio.com:3478" }
+o:depends("hysteria2_realms", true)
+
 o = s:option(Value, "hy2_auth", translate("Users Authentication"))
 o:depends("type", "hysteria2")
 o:depends({type = "v2ray", v2ray_protocol = "hysteria2"})
@@ -581,7 +670,7 @@ o.rmempty = false
 
 o = s:option(Flag, "flag_port_hopping", translate("Enable Port Hopping"))
 o:depends("type", "hysteria2")
-o:depends({type = "v2ray", v2ray_protocol = "hysteria2"})
+o:depends({type = "v2ray", v2ray_protocol = "hysteria2", hysteria2_realms = false})
 o.rmempty = true
 o.default = "0"
 
@@ -622,18 +711,45 @@ o:depends("type", "hysteria2")
 o.rmempty = true
 o.default = "0"
 
-o = s:option(Value, "obfs_type", translate("Obfuscation Type"))
+o = s:option(ListValue, "obfs_type", translate("Obfuscation Type"))
+o:value("", translate("Disable"))
+o:value("salamander")
+o:value("gecko")
+o.rmempty = true
 o:depends({type = "hysteria2", flag_obfs = true})
 o:depends({type = "v2ray", v2ray_protocol = "hysteria2", flag_obfs = true})
-o.rmempty = true
-o.placeholder = "salamander"
+
+o = s:option(Value, "obfs_MinPacketSize", translate("Gecko Packet Size (min)"))
+o.datatype = "uinteger"
+o.placeholder = "512"
+o.default = "512"
+o:depends({type = "hysteria2", flag_obfs = true, obfs_type = "gecko"})
+o:depends({type = "v2ray", v2ray_protocol = "hysteria2", flag_obfs = true, obfs_type = "gecko"})
+
+o = s:option(Value, "obfs_MaxPacketSize", translate("Gecko Packet Size (max)"))
+o.datatype = "uinteger"
+o.placeholder = "1200"
+o.default = "1200"
+o:depends({type = "hysteria2", flag_obfs = true, obfs_type = "gecko"})
+o:depends({type = "v2ray", v2ray_protocol = "hysteria2", flag_obfs = true, obfs_type = "gecko"})
 
 o = s:option(Value, "salamander", translate("Obfuscation Password"))
-o:depends({type = "hysteria2", flag_obfs = true})
-o:depends({type = "v2ray", v2ray_protocol = "hysteria2", flag_obfs = true})
 o.password = true
 o.rmempty = true
-o.placeholder = "cry_me_a_r1ver"
+o:depends({type = "hysteria2", flag_obfs = true})
+local obfs = s.fields["obfs_type"].keylist
+if obfs and type(obfs) == "table" and #obfs > 0 then
+	for _, v in ipairs(obfs) do
+		if v and v ~= "" then
+			o:depends({
+				type = "v2ray", 
+				v2ray_protocol = "hysteria2", 
+				obfs_type = v, 
+				flag_obfs = true
+			})
+		end
+	end
+end
 
 o = s:option(Flag, "flag_quicparam", translate("Hysterir QUIC parameters"))
 o:depends("type", "hysteria2")
@@ -734,7 +850,7 @@ end
 o.default = "sslocal"
 o.rmempty = false
 
-o = s:option(Value, "sslocal_password",translate("Shadowsocks password"))
+o = s:option(Value, "sslocal_password",translate("Shadowsocks Password"))
 o:depends({type = "shadowtls", chain_type = "sslocal"})
 o.rmempty = true
 
@@ -895,6 +1011,28 @@ o:value("5", "Socks5")
 o.rmempty = true
 o.default = "5"
 o:depends({type = "v2ray", v2ray_protocol = "socks"})
+
+o = s:option(ListValue, "snell_version", translate("Snell Version"))
+o:value("1", "v1")
+o:value("2", "v2")
+o:value("3", "v3")
+o:value("4", "v4")
+o:value("5", "v5")
+o.default = "4"
+o.rmempty = true
+o:depends({type = "v2ray", v2ray_protocol = "snell"})
+
+o = s:option(ListValue, "snell_obfs", translate("Snell Obfs"))
+o:value("", translate("Disable"))
+o:value("http", "HTTP")
+o:value("tls", "TLS")
+o.default = ""
+o.rmempty = true
+o:depends({type = "v2ray", v2ray_protocol = "snell"})
+
+o = s:option(Value, "snell_obfs_host", translate("Snell Obfs Host"))
+o.rmempty = true
+o:depends({type = "v2ray", v2ray_protocol = "snell"})
 
 -- 传输协议
 o = s:option(ListValue, "transport", translate("Transport"))
@@ -1190,12 +1328,12 @@ o.default = "0"
 o.rmempty = true
 
 o = s:option(DynamicList, "local_addresses", translate("Local addresses"))
-o.datatype = "cidr"
+--o.datatype = "cidr"
 o:depends({type = "v2ray", v2ray_protocol = "wireguard"})
 o.rmempty = true
 
 o = s:option(DynamicList, "reserved", translate("Reserved bytes(optional)"))
-o.description = translate("Decimal numbers separated by \",\" or Base64-encoded strings.")
+o.description = translate("Supports decimal numbers separated by \",\" or Base64-encoded strings, with a maximum length of 3 bytes.")
 o:depends({type = "v2ray", v2ray_protocol = "wireguard"})
 o.rmempty = true
 
@@ -1240,12 +1378,18 @@ o:depends("transport", "grpc")
 o = s:option(Flag, "enable_finalmask", translate("FinalMask"))
 o.rmempty = true
 o.default = "0"
-o:depends({type = "v2ray", v2ray_protocol = "vless"})
-o:depends({type = "v2ray", v2ray_protocol = "vmess"})
-o:depends({type = "v2ray", v2ray_protocol = "trojan"})
-o:depends({type = "v2ray", v2ray_protocol = "shadowsocks"})
-o:depends({type = "v2ray", v2ray_protocol = "wireguard"})
-o:depends({type = "v2ray", v2ray_protocol = "hysteria2"})
+local protocols = s.fields["v2ray_protocol"].keylist
+if protocols and type(protocols) == "table" and #protocols > 0 then
+	for _, proto in ipairs(protocols) do
+		if not proto:find("^_") then
+			if proto == "hysteria2" then
+				o:depends({type = "v2ray", v2ray_protocol = "hysteria2", hysteria2_realms = false})
+			elseif proto ~= "socks" and proto ~= "http" then
+				o:depends({type = "v2ray", v2ray_protocol = proto})
+			end
+		end
+	end
+end
 
 o = s:option(TextValue, "finalmask", " ")
 o.description = translate("An FinalMaskObject in JSON format, used for sharing.") .. "<br>" ..
@@ -1342,7 +1486,18 @@ if is_finded("xray") then
 	o = s:option(Flag, "enable_ech", translate("Enable ECH(optional)"))
 	o.rmempty = true
 	o.default = "0"
-	o:depends({type = "v2ray", tls = true})
+	local protocols = s.fields["v2ray_protocol"].keylist
+	if protocols and type(protocols) == "table" and #protocols > 0 then
+		for _, proto in ipairs(protocols) do
+			if not proto:find("^_") then
+				if proto == "hysteria2" then
+					o:depends({type = "v2ray", v2ray_protocol = "hysteria2", tls = true, hysteria2_realms = false})
+				else
+					o:depends({type = "v2ray", v2ray_protocol = proto, tls = true})
+				end
+			end
+		end
+	end
 
 	o = s:option(TextValue, "ech_config", translate("ECH Config"))
 	o.description = translate(
@@ -1445,14 +1600,18 @@ end
 if xray_version_val >= 260131 then
 	-- Xray 版本大于等于 26.1.31
 	-- [[ Xray TLS pinSHA256 ]] --
-	o = s:option(Value, "tls_CertSha", translate("TLS Chain Fingerprint (SHA256)"), translate("Once set, connects only when the server’s chain fingerprint matches."))
+	o = s:option(Value, "tls_CertSha", translate("TLS Chain Fingerprint (SHA256)"))
 	o.rmempty = true
 	o:depends({type = "v2ray", tls = true})
+	o.description = translate("Once set, connects only when the server’s chain fingerprint matches.") ..
+			string.format("<a href='javascript:void(0)' onclick='javascript:fetchCertSha256(this)'>%s</a>", "→ " .. translate("Fetch Manually"))
 
 	-- [[ Xray TLS verify leaf certificate name ]] --
-	o = s:option(Value, "tls_CertByName", translate("TLS Certificate Name (CertName)"), translate("TLS is used to verify the leaf certificate name."))
+	o = s:option(Value, "tls_CertByName", translate("TLS Certificate Name (CertName)"))
 	o.rmempty = true
 	o:depends({type = "v2ray", tls = true})
+	o.description = translate("TLS is used to verify the leaf certificate name.") ..
+			string.format("<a href='javascript:void(0)' onclick='javascript:fetchCertByName(this)'>%s</a>", "→ " .. translate("Fetch Manually"))
 end
 
 -- [[ Hysteria2 TLS pinSHA256 ]] --
