@@ -14,6 +14,8 @@ local GLOBAL = {
 
 local xray_version = api.get_app_version("xray")
 
+local xray_min_version = "26.3.27"
+
 local function get_domain_excluded()
 	local path = string.format("/usr/share/%s/rules/domains_excluded", appname)
 	local content = fs.readfile(path)
@@ -144,27 +146,21 @@ function gen_outbound(flag, node, tag, proxy_table)
 					mark = 255,
 					domainStrategy = node.domain_strategy or "UseIP",
 					tcpFastOpen = (node.tcp_fast_open == "1") and true or nil,
-					tcpMptcp = (node.tcpMptcp == "1") and true or nil
+					tcpMptcp = (node.tcpMptcp == "1") and true or nil,
+					happyEyeballs = (node.happy_eyeballs == "1") and {
+						TryDelayMs = 250,
+						PrioritizeIPv6 = false,
+						Interleave = 1,
+						MaxConcurrentTry = 4
+					} or nil
 				},
-				network = node.transport,
+				[(api.compare_versions(xray_version, "<", "26.7.11")) and "network" or "method"] = node.transport, -- Todo: Remove version check and "network"
 				security = node.stream_security,
 				tlsSettings = (node.stream_security == "tls") and {
 					serverName = node.tls_serverName,
-					allowInsecure = (function()
-								if node.tls_pinSHA256 and node.tls_pinSHA256 ~= "" then return nil end
-								if api.compare_versions(os.date("%Y.%m.%d"), "<", "2026.6.1") and node.tls_allowInsecure == "1" then return true end
-							end)(),
 					fingerprint = (node.type == "Xray" and node.utls == "1" and node.fingerprint and node.fingerprint ~= "") and node.fingerprint or nil,
-					pinnedPeerCertSha256 = (function()
-								if api.compare_versions(xray_version, "<", "26.1.31") then return nil end
-								if not node.tls_pinSHA256 then return "" end
-								return node.tls_pinSHA256
-							end)(),
-					verifyPeerCertByName = (function()
-								if api.compare_versions(xray_version, "<", "26.1.31") then return nil end
-								if not node.tls_CertByName then return "" end
-								return node.tls_CertByName
-							end)(),
+					pinnedPeerCertSha256 = node.tls_pinSHA256 or "",
+					verifyPeerCertByName = node.tls_CertByName or "",
 					echConfigList = (node.ech == "1") and node.ech_config or nil,
 					certificates = (node.tls_certificate == "1" and node.tls_certificate_pem ~= "") and {
 						certificate = api.split(node.tls_certificate_pem, "\n"),
@@ -649,7 +645,7 @@ function gen_config_server(node)
 				protocol = node.protocol,
 				settings = settings,
 				streamSettings = {
-					network = node.transport,
+					[(api.compare_versions(xray_version, "<", "26.7.11")) and "network" or "method"] = node.transport, -- Todo: Remove version check and "network"
 					security = "none",
 					tlsSettings = ("1" == node.tls) and {
 						disableSystemRoot = false,
@@ -789,7 +785,10 @@ function gen_config_server(node)
 		},
 		-- 传出连接
 		outbounds = outbounds,
-		routing = routing
+		routing = routing,
+		version = {
+			min = xray_min_version
+		}
 	}
 
 	local alpn = {}
@@ -815,7 +814,8 @@ function gen_config_server(node)
 				serverNames = node.reality_serverNames or {},
 				privateKey = node.reality_private_key,
 				shortIds = node.reality_shortId or "",
-				mldsa65Seed = (node.use_mldsa65Seed == "1") and node.reality_mldsa65Seed or nil
+				mldsa65Seed = (node.use_mldsa65Seed == "1") and node.reality_mldsa65Seed or nil,
+				minClientVer = "1.0.0"
 			} or nil
 		end
 	end
@@ -868,6 +868,9 @@ function gen_config(var)
 	local dns_socks_port = var["dns_socks_port"]
 	local loglevel = var["loglevel"] or "warning"
 	local no_run = var["no_run"]
+	local use_proxy_list = var["use_proxy_list"]
+	local use_gfw_list = var["use_gfw_list"]
+	local chn_list = var["chn_list"]
 
 	local dns_domain_rules = {}
 	local dns = nil
@@ -895,10 +898,10 @@ function gen_config(var)
 		fragment_table = {
 			type = "fragment",
 			settings = {
-				packets = xray_settings.fragment_packets,
-				lengths = #lengths > 0 and lengths or nil,
-				delays = #delays > 0 and delays or nil,
-				maxSplit = xray_settings.fragment_maxSplit
+				packets = xray_settings.fragment_packets or "tlshello",
+				lengths = #lengths > 0 and lengths or {"3-5","6-8","10-20"},
+				delays = #delays > 0 and delays or {"10-20"},
+				maxSplit = xray_settings.fragment_maxSplit or "3-6"
 			}
 		}
 	end
@@ -1011,33 +1014,6 @@ function gen_config(var)
 			end
 		end
 
-		local nodes_list = {}
-		function get_balancer_batch_nodes(_node)
-			if #nodes_list == 0 then
-				for k, e in ipairs(api.get_valid_nodes()) do
-					if e.node_type == "normal" and (not e.chain_proxy or e.chain_proxy == "") then
-						nodes_list[#nodes_list + 1] = {
-							id = e[".name"],
-							remarks = e["remarks"],
-							group = e["group"]
-						}
-					end
-				end
-			end
-			if not _node.node_group or _node.node_group == "" then return {} end
-			local nodes = {}
-			for g in _node.node_group:gmatch("%S+") do
-				g = api.UrlDecode(g)
-				for k, v in pairs(nodes_list) do
-					local gn = (v.group and v.group ~= "") and v.group or "default"
-					if gn:lower() == g:lower() and api.match_node_rule(v.remarks, _node.node_match_rule) then
-						nodes[#nodes + 1] = v.id
-					end
-				end
-			end
-			return nodes
-		end
-
 		function gen_loopback(outbound_tag, loopback_dst)
 			if not outbound_tag or outbound_tag == "" then return nil end
 			local inbound_tag = loopback_dst and "lo-to-" .. loopback_dst or outbound_tag .. "-lo"
@@ -1069,7 +1045,7 @@ function gen_config(var)
 			-- new balancer
 			local blc_nodes
 			if _node.node_add_mode and _node.node_add_mode == "batch" then
-				blc_nodes = get_balancer_batch_nodes(_node)
+				blc_nodes = api.get_batch_nodes(_node)
 			else
 				blc_nodes = _node.balancing_node
 			end
@@ -1093,6 +1069,10 @@ function gen_config(var)
 					if outboundTag then
 						valid_nodes[#valid_nodes + 1] = outboundTag
 					end
+				end
+				-- Check if balancing node duplicates fallback node
+				if _node.fallback_node == blc_node_id then
+					_node.fallback_node = nil
 				end
 			end
 			if #valid_nodes == 0 then return nil end
@@ -1386,7 +1366,50 @@ function gen_config(var)
 			end
 
 			--shunt rule
-			uci:foreach(appname, "shunt_rules", function(e)
+			local function foreach_shunt_rule(callback)
+				uci:foreach(appname, "shunt_rules", callback)
+
+				if use_gfw_list ~= "1" or chn_list ~= "0" then return end
+
+				-- GFW 模式下使用分流节点时添加特定规则
+				local function read_proxy_list(path)
+					if use_proxy_list ~= "1" then return "" end
+					local map, list = {}, {}
+					local f = io.open(path)
+					if f then
+						for line in f:lines() do
+							if line ~= "" and not line:find("#", 1, true) and not map[line] then
+								map[line] = 1
+								list[#list + 1] = line
+							end
+						end
+						f:close()
+					end
+					return table.concat(list, "\n")
+				end
+
+				local domain_list = read_proxy_list("/usr/share/passwall/rules/proxy_host")
+				local ip_list = read_proxy_list("/usr/share/passwall/rules/proxy_ip")
+
+				local bin = api.finded_com("geoview")
+				if bin then
+					local geo_file = (uci:get(appname, "@global_rules[0]", "v2ray_location_asset") or "/usr/share/v2ray/"):match("^(.*)/") .. "/geosite.dat"
+					if luci.sys.call('"' .. bin .. '" -type geosite -input "' .. geo_file .. '" | grep -q "^GFW$"') == 0 then
+						domain_list = (domain_list == "") and "geosite:gfw" or domain_list .. "\ngeosite:gfw"
+					end
+				end
+
+				if domain_list ~= "" or ip_list ~= "" then
+					node["GFW_Mode_List"] = "_default"
+					callback({
+						[".name"] = "GFW_Mode_List",
+						remarks = "GFW_Mode_List",
+						domain_list = (domain_list ~= "") and domain_list or nil,
+						ip_list = (ip_list ~= "") and ip_list or nil
+					})
+				end
+			end
+			foreach_shunt_rule(function(e)
 				local outbound_tag = gen_shunt_node(e[".name"])
 				if outbound_tag and e.remarks then
 					if outbound_tag == "default" then
@@ -1485,6 +1508,15 @@ function gen_config(var)
 					end
 				end
 			end)
+
+			if use_gfw_list == "1" and chn_list == "0" then  -- GFW 模式下使用分流节点时添加兜底规则
+				table.insert(rules, {
+					ruleTag = "GFW_Mode_Default",
+					outboundTag = "direct",
+					port = (node.domainStrategy == "IPIfNonMatch") and "1-65535" or nil,
+					network = (node.domainStrategy ~= "IPIfNonMatch") and "tcp,udp" or nil
+				})
+			end
 
 			table.insert(rules, {
 				outboundTag = "direct",
@@ -1935,6 +1967,10 @@ function gen_config(var)
 
 	if inbounds or outbounds then
 		local config = {
+			env = (function()
+				local asset_location = uci:get(appname, "@global_rules[0]", "v2ray_location_asset") or "/usr/share/v2ray/"
+				return { XRAY_LOCATION_ASSET = asset_location }
+			end)(),
 			log = {
 				-- error = string.format("/tmp/etc/%s/%s.log", appname, node[".name"]),
 				loglevel = loglevel
@@ -1968,6 +2004,9 @@ function gen_config(var)
 				--     statsInboundUplink = false,
 				--     statsInboundDownlink = false
 				-- }
+			},
+			version = {
+				min = xray_min_version
 			}
 		}
 

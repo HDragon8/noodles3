@@ -388,7 +388,10 @@ ln_run() {
 		[ -x "${file_func}" ] || log 1 "$(i18n "%s does not have execute permissions and cannot be started: %s %s" "$(readlink ${file_func})" "${file_func}" "$*")"
 	fi
 	#echo "${file_func} $*" >&2
-	[ -n "${file_func}" ] || log 1 "$(i18n "%s not found, unable to start..." "${ln_name}")"
+	[ -n "${file_func}" ] || {
+		log 1 "$(i18n "%s not found, unable to start..." "${ln_name}")"
+		return 1
+	}
 
 	[ "${queue_run}" == "1" ] && {
 		mkdir -p $TMP_PROCESS_LIST_PATH
@@ -409,6 +412,7 @@ ln_run() {
 
 run_process_queue() {
 	[ -d ${TMP_PROCESS_LIST_PATH} ] && {
+		mkdir -p ${TMP_SCRIPT_FUNC_PATH}
 		for filename in $(ls ${TMP_PROCESS_LIST_PATH}); do
 			cmd=$(cat ${TMP_PROCESS_LIST_PATH}/${filename})
 			cmd_check=$(echo $cmd | awk -F '>' '{print $1}')
@@ -416,7 +420,7 @@ run_process_queue() {
 			if [ $icount = 0 ]; then
 				eval $(echo "nohup ${cmd} 2>&1 &") >/dev/null 2>&1 &
 			fi
-			rm -rf ${TMP_PROCESS_LIST_PATH}/${filename}
+			mv -f ${TMP_PROCESS_LIST_PATH}/${filename} ${TMP_SCRIPT_FUNC_PATH}/queued_${filename}
 		done
 	}
 	rm -rf ${TMP_PROCESS_LIST_PATH}
@@ -424,38 +428,6 @@ run_process_queue() {
 
 kill_all() {
 	kill -9 $(pidof "$@") >/dev/null 2>&1
-}
-
-gen_lanlist() {
-	cat <<-EOF
-		0.0.0.0/8
-		10.0.0.0/8
-		100.64.0.0/10
-		127.0.0.0/8
-		169.254.0.0/16
-		172.16.0.0/12
-		192.168.0.0/16
-		224.0.0.0/4
-		240.0.0.0/4
-	EOF
-}
-
-gen_lanlist_6() {
-	cat <<-EOF
-		::/128
-		::1/128
-		::ffff:0:0/96
-		::ffff:0:0:0/96
-		64:ff9b::/96
-		100::/64
-		2001::/32
-		2001:20::/28
-		2001:db8::/32
-		2002::/16
-		fc00::/7
-		fe80::/10
-		ff00::/8
-	EOF
 }
 
 get_wan_ips() {

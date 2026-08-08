@@ -4,14 +4,12 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 MY_PATH=$DIR/iptables.sh
 UTILS_PATH=$DIR/utils.sh
 IPSET_LOCAL="psw2_local"
-IPSET_PROXY_LAN="psw2_proxy_lan"
-IPSET_LAN="psw2_lan"
+IPSET_DIRECT="psw2_direct"
 IPSET_VPS="psw2_vps"
 IPSET_WAN="psw2_wan"
 
 IPSET_LOCAL6="psw2_local6"
-IPSET_PROXY_LAN6="psw2_proxy_lan6"
-IPSET_LAN6="psw2_lan6"
+IPSET_DIRECT6="psw2_direct6"
 IPSET_VPS6="psw2_vps6"
 IPSET_WAN6="psw2_wan6"
 
@@ -191,7 +189,9 @@ gen_shunt_list() {
 			local default_outbound="redirect"
 			[ "$default_node" = "_direct" ] && default_outbound="direct"
 			local shunt_ids=$(uci show $CONFIG | grep "=shunt_rules" | awk -F '.' '{print $2}' | awk -F '=' '{print $1}')
+			local shunt_group=$(config_n_get $node shunt_group)
 			for shunt_id in $shunt_ids; do
+				[ "${shunt_group}" != "$(config_n_get ${shunt_id} group)" ] && continue
 				local shunt_node=$(config_n_get ${node} "${shunt_id}")
 				[ -n "$shunt_node" ] && {
 					local ipset_v4="psw2_${node}_${shunt_id}"
@@ -204,8 +204,8 @@ gen_shunt_list() {
 					_SHUNT_LIST4="${_SHUNT_LIST4} ${ipset_v4}:${outbound}"
 					_SHUNT_LIST6="${_SHUNT_LIST6} ${ipset_v6}:${outbound}"
 
-					config_n_get $shunt_id ip_list | tr -s "\r\n" "\n" | sed -e "/^$/d" | grep -E "(\.((2(5[0-5]|[0-4][0-9]))|[0-1]?[0-9]{1,2})){3}" | sed -e "s/^/add $ipset_v4 &/g" | awk '{print $0} END{print "COMMIT"}' | ipset -! -R
-					config_n_get $shunt_id ip_list | tr -s "\r\n" "\n" | sed -e "/^$/d" | grep -E "([A-Fa-f0-9]{1,4}::?){1,7}[A-Fa-f0-9]{1,4}" | sed -e "s/^/add $ipset_v6 &/g" | awk '{print $0} END{print "COMMIT"}' | ipset -! -R
+					config_n_get $shunt_id ip_list | sed 's/#.*//' | grep -E "(\.((2(5[0-5]|[0-4][0-9]))|[0-1]?[0-9]{1,2})){3}" | sed -e "s/^/add $ipset_v4 &/g" | awk '{print $0} END{print "COMMIT"}' | ipset -! -R
+					config_n_get $shunt_id ip_list | sed 's/#.*//' | grep -E "([A-Fa-f0-9]{1,4}::?){1,7}[A-Fa-f0-9]{1,4}" | sed -e "s/^/add $ipset_v6 &/g" | awk '{print $0} END{print "COMMIT"}' | ipset -! -R
 					[ "${enable_geoview_ip}" = "1" ] && {
 						local _geoip_code=$(config_n_get $shunt_id ip_list | tr -s "\r\n" "\n" | sed -e "/^$/d" | grep -E "^geoip:" | grep -v "^geoip:private" | sed -E 's/^geoip:(.*)/\1/' | sed ':a;N;$!ba;s/\n/,/g')
 						[ -n "$_geoip_code" ] && {
@@ -392,27 +392,23 @@ load_acl() {
 					fi
 
 					[ "$accept_icmp" = "1" ] && {
-						$ipt_n -I PSW2 $(comment "$remarks") -p icmp ${_ipt_source} $(dst $IPSET_PROXY_LAN) $(REDIRECT)
 						$ipt_n -A PSW2 $(comment "$remarks") -p icmp ${_ipt_source} -d $FAKE_IP $(REDIRECT)
 						add_shunt_t_rule "${shunt_list4}" "$ipt_n -A PSW2 $(comment "$remarks") -p icmp ${_ipt_source}" "$(REDIRECT)"
 						$ipt_n -A PSW2 $(comment "$remarks") -p icmp ${_ipt_source} $(REDIRECT)
 					}
 					
 					[ "$accept_icmpv6" = "1" ] && [ "$PROXY_IPV6" == "1" ] && {
-						$ip6t_n -I PSW2 $(comment "$remarks") -p ipv6-icmp ${_ipt_source} $(dst $IPSET_PROXY_LAN6) $(REDIRECT) 2>/dev/null
 						$ip6t_n -A PSW2 $(comment "$remarks") -p ipv6-icmp ${_ipt_source} -d $FAKE_IP_6 $(REDIRECT) 2>/dev/null
 						add_shunt_t_rule "${shunt_list6}" "$ip6t_n -A PSW2 $(comment "$remarks") -p ipv6-icmp ${_ipt_source}" "$(REDIRECT)" 2>/dev/null
 						$ip6t_n -A PSW2 $(comment "$remarks") -p ipv6-icmp ${_ipt_source} $(REDIRECT) 2>/dev/null
 					}
 
-					$ipt_tmp -I PSW2 $(comment "$remarks") -p tcp ${_ipt_source} $(dst $IPSET_PROXY_LAN) ${ipt_j}
 					$ipt_tmp -A PSW2 $(comment "$remarks") -p tcp ${_ipt_source} -d $FAKE_IP ${ipt_j}
 					add_shunt_t_rule "${shunt_list4}" "$ipt_tmp -A PSW2 $(comment "$remarks") -p tcp ${_ipt_source}" "${ipt_j}" $tcp_redir_ports
 					add_port_rules "$ipt_tmp -A PSW2 $(comment "$remarks") -p tcp ${_ipt_source}" $tcp_redir_ports "${ipt_j}"
 					[ -n "${is_tproxy}" ] && $ipt_m -A PSW2 $(comment "$remarks") -p tcp ${_ipt_source} $(REDIRECT $redir_port TPROXY)
 
 					[ "$PROXY_IPV6" == "1" ] && [ "$_ipv4" != "1" ] && {
-						$ip6t_m -I PSW2 $(comment "$remarks") -p tcp ${_ipt_source} $(dst $IPSET_PROXY_LAN6) -j PSW2_RULE 2>/dev/null
 						$ip6t_m -A PSW2 $(comment "$remarks") -p tcp ${_ipt_source} -d $FAKE_IP_6 -j PSW2_RULE 2>/dev/null
 						add_shunt_t_rule "${shunt_list6}" "$ip6t_m -A PSW2 $(comment "$remarks") -p tcp ${_ipt_source}" "${ipt_j}" $tcp_redir_ports 2>/dev/null
 						add_port_rules "$ip6t_m -A PSW2 $(comment "$remarks") -p tcp ${_ipt_source}" $tcp_redir_ports "-j PSW2_RULE" 2>/dev/null
@@ -426,14 +422,12 @@ load_acl() {
 				[ "$udp_proxy_mode" != "disable" ] && [ -n "$redir_port" ] && {
 					msg2="${msg}$(i18n "Use the %s node [%s]" "UDP" "${node_remark}")(TPROXY:${redir_port})"
 
-					$ipt_m -I PSW2 $(comment "$remarks") -p udp ${_ipt_source} $(dst $IPSET_PROXY_LAN) -j PSW2_RULE
 					$ipt_m -A PSW2 $(comment "$remarks") -p udp ${_ipt_source} -d $FAKE_IP -j PSW2_RULE
 					add_shunt_t_rule "${shunt_list4}" "$ipt_m -A PSW2 $(comment "$remarks") -p udp ${_ipt_source}" "-j PSW2_RULE" $udp_redir_ports
 					add_port_rules "$ipt_m -A PSW2 $(comment "$remarks") -p udp ${_ipt_source}" $udp_redir_ports "-j PSW2_RULE"
 					$ipt_m -A PSW2 $(comment "$remarks") -p udp ${_ipt_source} $(REDIRECT $redir_port TPROXY)
 
 					[ "$PROXY_IPV6" == "1" ] && [ "$_ipv4" != "1" ] && {
-						$ip6t_m -I PSW2 $(comment "$remarks") -p udp ${_ipt_source} $(dst $IPSET_PROXY_LAN6) -j PSW2_RULE 2>/dev/null
 						$ip6t_m -A PSW2 $(comment "$remarks") -p udp ${_ipt_source} -d $FAKE_IP_6 -j PSW2_RULE 2>/dev/null
 						add_shunt_t_rule "${shunt_list6}" "$ip6t_m -A PSW2 $(comment "$remarks") -p udp ${_ipt_source}" "-j PSW2_RULE" $udp_redir_ports 2>/dev/null
 						add_port_rules "$ip6t_m -A PSW2 $(comment "$remarks") -p udp ${_ipt_source}" $udp_redir_ports "-j PSW2_RULE" 2>/dev/null
@@ -498,27 +492,23 @@ load_acl() {
 			fi
 
 			[ "$accept_icmp" = "1" ] && {
-				$ipt_n -I PSW2 $(comment "${comment_d}") -p icmp $(dst $IPSET_PROXY_LAN) $(REDIRECT)
 				$ipt_n -A PSW2 $(comment "${comment_d}") -p icmp -d $FAKE_IP $(REDIRECT)
 				add_shunt_t_rule "${SHUNT_LIST4}" "$ipt_n -A PSW2 $(comment "${comment_d}") -p icmp" "$(REDIRECT)"
 				$ipt_n -A PSW2 $(comment "${comment_d}") -p icmp $(REDIRECT)
 			}
 			
 			[ "$accept_icmpv6" = "1" ] && [ "$PROXY_IPV6" == "1" ] && {
-				$ip6t_n -I PSW2 $(comment "${comment_d}") -p ipv6-icmp $(dst $IPSET_PROXY_LAN6) $(REDIRECT)
 				$ip6t_n -A PSW2 $(comment "${comment_d}") -p ipv6-icmp -d $FAKE_IP_6 $(REDIRECT)
 				add_shunt_t_rule "${SHUNT_LIST6}" "$ip6t_n -A PSW2 $(comment "${comment_d}") -p ipv6-icmp" "$(REDIRECT)"
 				$ip6t_n -A PSW2 $(comment "${comment_d}") -p ipv6-icmp $(REDIRECT)
 			}
 
-			$ipt_tmp -I PSW2 $(comment "${comment_d}") -p tcp $(dst $IPSET_PROXY_LAN) ${ipt_j}
 			$ipt_tmp -A PSW2 $(comment "${comment_d}") -p tcp -d $FAKE_IP ${ipt_j}
 			add_shunt_t_rule "${SHUNT_LIST4}" "$ipt_tmp -A PSW2 $(comment "${comment_d}") -p tcp" "${ipt_j}" $TCP_REDIR_PORTS
 			add_port_rules "$ipt_tmp -A PSW2 $(comment "${comment_d}") -p tcp" $TCP_REDIR_PORTS "${ipt_j}"
 			[ -n "${is_tproxy}" ] && $ipt_m -A PSW2 $(comment "${comment_d}") -p tcp $(REDIRECT $REDIR_PORT TPROXY)
 
 			[ "$PROXY_IPV6" == "1" ] && {
-				$ip6t_m -I PSW2 $(comment "${comment_d}") -p tcp $(dst $IPSET_PROXY_LAN6) -j PSW2_RULE
 				$ip6t_m -A PSW2 $(comment "${comment_d}") -p tcp -d $FAKE_IP_6 -j PSW2_RULE
 				add_shunt_t_rule "${SHUNT_LIST6}" "$ip6t_m -A PSW2 $(comment "${comment_d}") -p tcp" "-j PSW2_RULE" $TCP_REDIR_PORTS
 				add_port_rules "$ip6t_m -A PSW2 $(comment "${comment_d}") -p tcp" $TCP_REDIR_PORTS "-j PSW2_RULE"
@@ -531,14 +521,12 @@ load_acl() {
 		if [ "$UDP_PROXY_MODE" != "disable" ] && [ -n "$NODE" ]; then
 			msg2="${msg}$(i18n "Use the %s node [%s]" "UDP" "$(config_n_get $NODE remarks)")(TPROXY:${REDIR_PORT})"
 
-			$ipt_m -I PSW2 $(comment "${comment_d}") -p udp $(dst $IPSET_PROXY_LAN) -j PSW2_RULE
 			$ipt_m -A PSW2 $(comment "${comment_d}") -p udp -d $FAKE_IP -j PSW2_RULE
 			add_shunt_t_rule "${SHUNT_LIST4}" "$ipt_m -A PSW2 $(comment "${comment_d}") -p udp" "-j PSW2_RULE" $UDP_REDIR_PORTS
 			add_port_rules "$ipt_m -A PSW2 $(comment "${comment_d}") -p udp" $UDP_REDIR_PORTS "-j PSW2_RULE"
 			$ipt_m -A PSW2 $(comment "${comment_d}") -p udp $(REDIRECT $REDIR_PORT TPROXY)
 
 			[ "$PROXY_IPV6" == "1" ] && {
-				$ip6t_m -I PSW2 $(comment "${comment_d}") -p udp $(dst $IPSET_PROXY_LAN6) -j PSW2_RULE
 				$ip6t_m -A PSW2 $(comment "${comment_d}") -p udp -d $FAKE_IP_6 -j PSW2_RULE
 				add_shunt_t_rule "${SHUNT_LIST6}" "$ip6t_m -A PSW2 $(comment "${comment_d}") -p udp" "-j PSW2_RULE" $UDP_REDIR_PORTS
 				add_port_rules "$ip6t_m -A PSW2 $(comment "${comment_d}") -p udp" $UDP_REDIR_PORTS "-j PSW2_RULE"
@@ -633,27 +621,29 @@ add_firewall_rule() {
 	log_i18n 0 "Starting to load %s firewall rules..." "iptables"
 	
 	ipset -! create $IPSET_LOCAL nethash maxelem 1048576
-	ipset -! create $IPSET_PROXY_LAN nethash maxelem 1048576
-	ipset -! create $IPSET_LAN nethash maxelem 1048576
+	ipset -! create $IPSET_DIRECT nethash maxelem 1048576
 	ipset -! create $IPSET_VPS iphash maxelem 1048576
 	ipset -! create $IPSET_WAN nethash maxelem 1048576
 	
 	ipset -! create $IPSET_LOCAL6 nethash family inet6 maxelem 1048576
-	ipset -! create $IPSET_PROXY_LAN6 nethash family inet6 maxelem 1048576
-	ipset -! create $IPSET_LAN6 nethash family inet6 maxelem 1048576
+	ipset -! create $IPSET_DIRECT6 nethash family inet6 maxelem 1048576
 	ipset -! create $IPSET_VPS6 iphash family inet6 maxelem 1048576
 	ipset -! create $IPSET_WAN6 nethash family inet6 maxelem 1048576
 
 	get_local_ips ip4 | sed "s/^/add $IPSET_LOCAL /" | ipset -! -R
 	get_local_ips ip6 | sed "s/^/add $IPSET_LOCAL6 /" | ipset -! -R
 
-	ipset -! -R <<-EOF
-		$(gen_lanlist | sed -e "s/^/add $IPSET_LAN /")
-	EOF
-
-	ipset -! -R <<-EOF
-		$(gen_lanlist_6 | sed -e "s/^/add $IPSET_LAN6 /")
-	EOF
+	for ip in $(cat /usr/share/passwall2/direct_ip | tr -s "\r\n" "\n" | grep -v "^#" | sed -e "/^$/d"); do
+		if [[ "$ip" == *::* ]]; then
+			ipset -! add $IPSET_DIRECT6 $ip
+		elif [[ "$ip" == "geoip:"* ]]; then
+			local _geoip_code=$(echo $ip | awk -F ':' '{print $2}')
+			get_geoip $_geoip_code ipv4 | grep -E "(\.((2(5[0-5]|[0-4][0-9]))|[0-1]?[0-9]{1,2})){3}" | sed -e "s/^/add $IPSET_DIRECT &/g" | awk '{print $0} END{print "COMMIT"}' | ipset -! -R
+			get_geoip $_geoip_code ipv6 | grep -E "([A-Fa-f0-9]{1,4}::?){1,7}[A-Fa-f0-9]{1,4}" | sed -e "s/^/add $IPSET_DIRECT6 &/g" | awk '{print $0} END{print "COMMIT"}' | ipset -! -R
+		else
+			ipset -! add $IPSET_DIRECT $ip
+		fi
+	done
 
 	# Ignore special IP ranges
 	local lan_ifname lan_ip
@@ -665,11 +655,11 @@ add_firewall_rule() {
 		#log_i18n 1 "local network segments (%s) direct connection: %s" "IPv6" "${lan_ip6}"
 
 		[ -n "$lan_ip" ] && ipset -! -R <<-EOF
-			$(echo $lan_ip | sed -e "s/ /\n/g" | sed -e "s/^/add $IPSET_LAN /")
+			$(echo $lan_ip | sed -e "s/ /\n/g" | sed -e "s/^/add $IPSET_DIRECT /")
 		EOF
 
 		[ -n "$lan_ip6" ] && ipset -! -R <<-EOF
-			$(echo $lan_ip6 | sed -e "s/ /\n/g" | sed -e "s/^/add $IPSET_LAN6 /")
+			$(echo $lan_ip6 | sed -e "s/ /\n/g" | sed -e "s/^/add $IPSET_DIRECT6 /")
 		EOF
 	}
 
@@ -677,27 +667,17 @@ add_firewall_rule() {
 
 	[ -n "$ISP_DNS" ] && {
 		for ispip in $ISP_DNS; do
-			ipset -! add $IPSET_LAN $ispip
+			ipset -! add $IPSET_DIRECT $ispip
 			log_i18n 1 "$(i18n "Add ISP %s DNS to the whitelist: %s" "IPv4" "${ispip}")"
 		done
 	}
 
 	[ -n "$ISP_DNS6" ] && {
 		for ispip6 in $ISP_DNS6; do
-			ipset -! add $IPSET_LAN6 $ispip6
+			ipset -! add $IPSET_DIRECT6 $ispip6
 			log_i18n 1 "$(i18n "Add ISP %s DNS to the whitelist: %s" "IPv6" "${ispip6}")"
 		done
 	}
-
-	# Force proxy LAN IP CIDR
-	force_proxy_lan_ip=$(config_t_get global_forwarding force_proxy_lan_ip)
-	for ip in $force_proxy_lan_ip; do
-		if [[ "$ip" == *::* ]]; then
-			ipset -! add $IPSET_PROXY_LAN6 $ip
-		else
-			ipset -! add $IPSET_PROXY_LAN $ip
-		fi
-	done
 
 	# Shunt rules IP list (import when use shunt node)
 	gen_shunt_list "${NODE}" SHUNT_LIST4 SHUNT_LIST6
@@ -724,29 +704,23 @@ add_firewall_rule() {
 	fi
 
 	$ipt_n -N PSW2
-	$ipt_n -A PSW2 $(dst $IPSET_LAN) -j RETURN
 	$ipt_n -A PSW2 $(dst $IPSET_VPS) -j RETURN
 	$ipt_n -A PSW2 $(comment "WAN_IP_RETURN") $(dst $IPSET_WAN) -j RETURN
 	
-	[ "$accept_icmp" = "1" ] && insert_rule_after "$ipt_n" "PREROUTING" "prerouting_rule" "-p icmp -j PSW2"
-	[ -z "${is_tproxy}" ] && insert_rule_after "$ipt_n" "PREROUTING" "prerouting_rule" "-p tcp -j PSW2"
+	[ "$accept_icmp" = "1" ] && insert_rule_after "$ipt_n" "PREROUTING" "prerouting_rule" "$(dst $IPSET_DIRECT !) -p icmp -j PSW2"
+	[ -z "${is_tproxy}" ] && insert_rule_after "$ipt_n" "PREROUTING" "prerouting_rule" "$(dst $IPSET_DIRECT !) -p tcp -j PSW2"
 
 	$ipt_n -N PSW2_OUTPUT
-	$ipt_n -A PSW2_OUTPUT $(dst $IPSET_LAN) -j RETURN
 	$ipt_n -A PSW2_OUTPUT $(dst $IPSET_VPS) -j RETURN
 	$ipt_n -A PSW2_OUTPUT -m mark --mark 255 -j RETURN
 
 	$ipt_n -N PSW2_DNS
 	if [ $(config_t_get global dns_redirect "1") = "0" ]; then
 		#Only hijack when dest address is local IP
-		$ipt_n -I PREROUTING -m set --match-set $IPSET_LAN src $(dst $IPSET_LOCAL) -j PSW2_DNS
+		$ipt_n -I PREROUTING -m set --match-set $IPSET_DIRECT src $(dst $IPSET_LOCAL) -j PSW2_DNS
 	else
-		$ipt_n -I PREROUTING -m set --match-set $IPSET_LAN src -j PSW2_DNS
+		$ipt_n -I PREROUTING -m set --match-set $IPSET_DIRECT src -j PSW2_DNS
 	fi
-
-	$ipt_m -N PSW2_DIVERT
-	$ipt_m -A PSW2_DIVERT -j MARK --set-mark ${FWMARK}
-	$ipt_m -A PSW2_DIVERT -j ACCEPT
 
 	$ipt_m -N PSW2_RULE
 	$ipt_m -A PSW2_RULE -j CONNMARK --restore-mark
@@ -756,17 +730,16 @@ add_firewall_rule() {
 	$ipt_m -A PSW2_RULE -j CONNMARK --save-mark
 
 	$ipt_m -N PSW2
-	$ipt_m -A PSW2 $(dst $IPSET_LAN) -j RETURN
+	# Socket Only TCP, UDP Invalid.
+	$ipt_m -A PSW2 -p tcp -m socket -j MARK --set-mark ${FWMARK}
+	$ipt_m -A PSW2 -p tcp -m socket -j ACCEPT
 	$ipt_m -A PSW2 $(dst $IPSET_VPS) -j RETURN
 	$ipt_m -A PSW2 $(comment "WAN_IP_RETURN") $(dst $IPSET_WAN) -j RETURN
 	$ipt_m -A PSW2 -m conntrack --ctdir REPLY -j RETURN
 
-	insert_rule_before "$ipt_m" "PREROUTING" "mwan3" "-j PSW2"
-	# Only TCP, UDP Invalid.
-	insert_rule_before "$ipt_m" "PREROUTING" "PSW2" "-p tcp -m socket -j PSW2_DIVERT"
+	insert_rule_before "$ipt_m" "PREROUTING" "mwan3" "$(dst $IPSET_DIRECT !) -j PSW2"
 
 	$ipt_m -N PSW2_OUTPUT
-	$ipt_m -A PSW2_OUTPUT $(dst $IPSET_LAN) -j RETURN
 	$ipt_m -A PSW2_OUTPUT $(dst $IPSET_VPS) -j RETURN
 	$ipt_m -A PSW2_OUTPUT -m conntrack --ctdir REPLY -j RETURN
 	$ipt_m -A PSW2_OUTPUT -m mark --mark 255 -j RETURN
@@ -776,12 +749,10 @@ add_firewall_rule() {
 
 	[ "$accept_icmpv6" = "1" ] && {
 		$ip6t_n -N PSW2
-		$ip6t_n -A PSW2 $(dst $IPSET_LAN6) -j RETURN
 		$ip6t_n -A PSW2 $(dst $IPSET_VPS6) -j RETURN
-		$ip6t_n -A PREROUTING -p ipv6-icmp -j PSW2
+		$ip6t_n -A PREROUTING $(dst $IPSET_DIRECT6 !) -p ipv6-icmp -j PSW2
 
 		$ip6t_n -N PSW2_OUTPUT
-		$ip6t_n -A PSW2_OUTPUT $(dst $IPSET_LAN6) -j RETURN
 		$ip6t_n -A PSW2_OUTPUT $(dst $IPSET_VPS6) -j RETURN
 		$ip6t_n -A PSW2_OUTPUT -m mark --mark 255 -j RETURN
 	}
@@ -789,15 +760,11 @@ add_firewall_rule() {
 	$ip6t_n -N PSW2_DNS
 	if [ $(config_t_get global dns_redirect "1") = "0" ]; then
 		#Only hijack when dest address is local IP
-		$ip6t_n -I PREROUTING -m set --match-set $IPSET_LAN6 src $(dst $IPSET_LOCAL6) -j PSW2_DNS
+		$ip6t_n -I PREROUTING -m set --match-set $IPSET_DIRECT6 src $(dst $IPSET_LOCAL6) -j PSW2_DNS
 	else
-		$ip6t_n -I PREROUTING -m set --match-set $IPSET_LAN6 src -j PSW2_DNS
+		$ip6t_n -I PREROUTING -m set --match-set $IPSET_DIRECT6 src -j PSW2_DNS
 	fi
 
-	$ip6t_m -N PSW2_DIVERT
-	$ip6t_m -A PSW2_DIVERT -j MARK --set-mark ${FWMARK}
-	$ip6t_m -A PSW2_DIVERT -j ACCEPT
-	
 	$ip6t_m -N PSW2_RULE
 	$ip6t_m -A PSW2_RULE -j CONNMARK --restore-mark
 	$ip6t_m -A PSW2_RULE -m mark --mark ${FWMARK} -j RETURN
@@ -806,18 +773,17 @@ add_firewall_rule() {
 	$ip6t_m -A PSW2_RULE -j CONNMARK --save-mark
 
 	$ip6t_m -N PSW2
-	$ip6t_m -A PSW2 $(dst $IPSET_LAN6) -j RETURN
+	# Socket Only TCP, UDP Invalid.
+	$ip6t_m -A PSW2 -p tcp -m socket -j MARK --set-mark ${FWMARK}
+	$ip6t_m -A PSW2 -p tcp -m socket -j ACCEPT
 	$ip6t_m -A PSW2 $(dst $IPSET_VPS6) -j RETURN
 	$ip6t_m -A PSW2 $(comment "WAN6_IP_RETURN") $(dst $IPSET_WAN6) -j RETURN
 	$ip6t_m -A PSW2 -m conntrack --ctdir REPLY -j RETURN
 
-	insert_rule_before "$ip6t_m" "PREROUTING" "mwan3" "-j PSW2"
-	# Only TCP, UDP Invalid.
-	insert_rule_before "$ip6t_m" "PREROUTING" "PSW2" "-p tcp -m socket -j PSW2_DIVERT"
+	insert_rule_before "$ip6t_m" "PREROUTING" "mwan3" "$(dst $IPSET_DIRECT6 !) -j PSW2"
 
 	$ip6t_m -N PSW2_OUTPUT
 	$ip6t_m -A PSW2_OUTPUT -m mark --mark 255 -j RETURN
-	$ip6t_m -A PSW2_OUTPUT $(dst $IPSET_LAN6) -j RETURN
 	$ip6t_m -A PSW2_OUTPUT $(dst $IPSET_VPS6) -j RETURN
 	$ip6t_m -A PSW2_OUTPUT -m conntrack --ctdir REPLY -j RETURN
 
@@ -882,16 +848,14 @@ add_firewall_rule() {
 		# Loading local router proxy TCP
 		if [ -n "$NODE" ] && [ "$TCP_LOCALHOST_PROXY" = "1" ]; then
 			[ "$accept_icmp" = "1" ] && {
-				$ipt_n -A OUTPUT -p icmp -j PSW2_OUTPUT
-				$ipt_n -I PSW2_OUTPUT -p icmp $(dst $IPSET_PROXY_LAN) $(REDIRECT)
+				$ipt_n -A OUTPUT $(dst $IPSET_DIRECT !) -p icmp -j PSW2_OUTPUT
 				$ipt_n -A PSW2_OUTPUT -p icmp -d $FAKE_IP $(REDIRECT)
 				add_shunt_t_rule "${SHUNT_LIST4}" "$ipt_n -A PSW2_OUTPUT -p icmp" "$(REDIRECT)"
 				$ipt_n -A PSW2_OUTPUT -p icmp $(REDIRECT)
 			}
 
 			[ "$accept_icmpv6" = "1" ] && {
-				$ip6t_n -A OUTPUT -p ipv6-icmp -j PSW2_OUTPUT
-				$ip6t_n -I PSW2_OUTPUT -p ipv6-icmp $(dst $IPSET_PROXY_LAN6) $(REDIRECT)
+				$ip6t_n -A OUTPUT $(dst $IPSET_DIRECT6 !) -p ipv6-icmp -j PSW2_OUTPUT
 				$ip6t_n -A PSW2_OUTPUT -p ipv6-icmp -d $FAKE_IP_6 $(REDIRECT)
 				add_shunt_t_rule "${SHUNT_LIST6}" "$ip6t_n -A PSW2_OUTPUT -p ipv6-icmp" "$(REDIRECT)"
 				$ip6t_n -A PSW2_OUTPUT -p ipv6-icmp $(REDIRECT)
@@ -903,27 +867,23 @@ add_firewall_rule() {
 				ipt_j="$(REDIRECT $REDIR_PORT)"
 			fi
 
-			$ipt_tmp -I PSW2_OUTPUT -p tcp $(dst $IPSET_PROXY_LAN) ${ipt_j}
 			$ipt_tmp -A PSW2_OUTPUT -p tcp -d $FAKE_IP ${ipt_j}
 			add_shunt_t_rule "${SHUNT_LIST4}" "$ipt_tmp -A PSW2_OUTPUT -p tcp" "${ipt_j}" $TCP_REDIR_PORTS
 			add_port_rules "$ipt_tmp -A PSW2_OUTPUT -p tcp" $TCP_REDIR_PORTS "${ipt_j}"
-			[ -z "${is_tproxy}" ] && $ipt_n -A OUTPUT -p tcp -j PSW2_OUTPUT
+			[ -z "${is_tproxy}" ] && $ipt_n -A OUTPUT $(dst $IPSET_DIRECT !) -p tcp -j PSW2_OUTPUT
 			[ -n "${is_tproxy}" ] && {
-				$ipt_m -I PSW2 $(comment "${comment_l}") -p tcp -i lo $(dst $IPSET_PROXY_LAN) $(REDIRECT $REDIR_PORT TPROXY)
 				$ipt_m -A PSW2 $(comment "${comment_l}") -p tcp -i lo $(REDIRECT $REDIR_PORT TPROXY)
 				$ipt_m -A PSW2 $(comment "${comment_l}") -p tcp -i lo -j RETURN
-				insert_rule_before "$ipt_m" "OUTPUT" "mwan3" "$(comment mangle-OUTPUT-PSW2) -p tcp -j PSW2_OUTPUT"
+				insert_rule_before "$ipt_m" "OUTPUT" "mwan3" "$(comment mangle-OUTPUT-PSW2) $(dst $IPSET_DIRECT !) -p tcp -j PSW2_OUTPUT"
 			}
 
 			[ "$PROXY_IPV6" == "1" ] && {
-				$ip6t_m -I PSW2_OUTPUT -p tcp $(dst $IPSET_PROXY_LAN6) -j PSW2_RULE
 				$ip6t_m -A PSW2_OUTPUT -p tcp -d $FAKE_IP_6 -j PSW2_RULE
 				add_shunt_t_rule "${SHUNT_LIST6}" "$ip6t_m -A PSW2_OUTPUT -p tcp" "-j PSW2_RULE" $TCP_REDIR_PORTS
 				add_port_rules "$ip6t_m -A PSW2_OUTPUT -p tcp" $TCP_REDIR_PORTS "-j PSW2_RULE"
-				$ip6t_m -I PSW2 $(comment "${comment_l}") -p tcp -i lo $(dst $IPSET_PROXY_LAN6) $(REDIRECT $REDIR_PORT TPROXY)
 				$ip6t_m -A PSW2 $(comment "${comment_l}") -p tcp -i lo $(REDIRECT $REDIR_PORT TPROXY)
 				$ip6t_m -A PSW2 $(comment "${comment_l}") -p tcp -i lo -j RETURN
-				insert_rule_before "$ip6t_m" "OUTPUT" "mwan3" "$(comment mangle-OUTPUT-PSW2) -p tcp -j PSW2_OUTPUT"
+				insert_rule_before "$ip6t_m" "OUTPUT" "mwan3" "$(comment mangle-OUTPUT-PSW2) $(dst $IPSET_DIRECT6 !) -p tcp -j PSW2_OUTPUT"
 			}
 
 			[ -d "${TMP_IFACE_PATH}" ] && {
@@ -936,24 +896,20 @@ add_firewall_rule() {
 
 		# Loading local router proxy UDP
 		if [ -n "$NODE" ] && [ "$UDP_LOCALHOST_PROXY" = "1" ]; then
-			$ipt_m -I PSW2_OUTPUT -p udp $(dst $IPSET_PROXY_LAN) -j PSW2_RULE
 			$ipt_m -A PSW2_OUTPUT -p udp -d $FAKE_IP -j PSW2_RULE
 			add_shunt_t_rule "${SHUNT_LIST4}" "$ipt_m -A PSW2_OUTPUT -p udp" "-j PSW2_RULE" $UDP_REDIR_PORTS
 			add_port_rules "$ipt_m -A PSW2_OUTPUT -p udp" $UDP_REDIR_PORTS "-j PSW2_RULE"
-			$ipt_m -I PSW2 $(comment "${comment_l}") -p udp -i lo $(dst $IPSET_PROXY_LAN) $(REDIRECT $REDIR_PORT TPROXY)
 			$ipt_m -A PSW2 $(comment "${comment_l}") -p udp -i lo $(REDIRECT $REDIR_PORT TPROXY)
 			$ipt_m -A PSW2 $(comment "${comment_l}") -p udp -i lo -j RETURN
-			insert_rule_before "$ipt_m" "OUTPUT" "mwan3" "$(comment mangle-OUTPUT-PSW2) -p udp -j PSW2_OUTPUT"
+			insert_rule_before "$ipt_m" "OUTPUT" "mwan3" "$(comment mangle-OUTPUT-PSW2) $(dst $IPSET_DIRECT !) -p udp -j PSW2_OUTPUT"
 
 			[ "$PROXY_IPV6" == "1" ] && {
-				$ip6t_m -I PSW2_OUTPUT -p udp $(dst $IPSET_PROXY_LAN6) -j PSW2_RULE
 				$ip6t_m -A PSW2_OUTPUT -p udp -d $FAKE_IP_6 -j PSW2_RULE
 				add_shunt_t_rule "${SHUNT_LIST6}" "$ip6t_m -A PSW2_OUTPUT -p udp" "-j PSW2_RULE" $UDP_REDIR_PORTS
 				add_port_rules "$ip6t_m -A PSW2_OUTPUT -p udp" $UDP_REDIR_PORTS "-j PSW2_RULE"
-				$ip6t_m -I PSW2 $(comment "${comment_l}") -p udp -i lo $(dst $IPSET_PROXY_LAN6) $(REDIRECT $REDIR_PORT TPROXY)
 				$ip6t_m -A PSW2 $(comment "${comment_l}") -p udp -i lo $(REDIRECT $REDIR_PORT TPROXY)
 				$ip6t_m -A PSW2 $(comment "${comment_l}") -p udp -i lo -j RETURN
-				insert_rule_before "$ip6t_m" "OUTPUT" "mwan3" "$(comment mangle-OUTPUT-PSW2) -p udp -j PSW2_OUTPUT"
+				insert_rule_before "$ip6t_m" "OUTPUT" "mwan3" "$(comment mangle-OUTPUT-PSW2) $(dst $IPSET_DIRECT6 !) -p udp -j PSW2_OUTPUT"
 			}
 
 			[ -d "${TMP_IFACE_PATH}" ] && {
@@ -970,8 +926,10 @@ add_firewall_rule() {
 		$ip6t_m -I OUTPUT $(comment "mangle-OUTPUT-PSW2") -o lo -j RETURN
 		insert_rule_before "$ip6t_m" "OUTPUT" "mwan3" "$(comment mangle-OUTPUT-PSW2) -m mark --mark ${FWMARK} -j RETURN"
 
-		$ipt_m -A PSW2 -p udp --dport 53 -j RETURN
-		$ip6t_m -A PSW2 -p udp --dport 53 -j RETURN
+		$ipt_m -A PSW2 -p tcp --dport 53 -j ACCEPT
+		$ipt_m -A PSW2 -p udp --dport 53 -j ACCEPT
+		$ip6t_m -A PSW2 -p tcp --dport 53 -j ACCEPT
+		$ip6t_m -A PSW2 -p udp --dport 53 -j ACCEPT
 	}
 
 	load_acl
@@ -1002,7 +960,7 @@ del_firewall_rule() {
 				$ipt -D $chain $index 2>/dev/null
 			done
 		done
-		for chain in "PSW2" "PSW2_OUTPUT" "PSW2_DIVERT" "PSW2_DNS" "PSW2_RULE"; do
+		for chain in "PSW2" "PSW2_OUTPUT" "PSW2_DNS" "PSW2_RULE"; do
 			$ipt -F $chain 2>/dev/null
 			$ipt -X $chain 2>/dev/null
 		done
@@ -1036,7 +994,7 @@ gen_include() {
 		[ -z "${_ipt}" ] && return
 
 		echo "*$2"
-		${_ipt}-save -t $2 | grep "PSW2" | grep -v "\-j PSW2$" | grep -v "socket \-j PSW2_DIVERT$" | sed -e "s/^-A \(OUTPUT\|PREROUTING\)/-I \1 1/"
+		${_ipt}-save -t $2 | grep "PSW2" | grep -v "\-j PSW2$" | sed -e "s/^-A \(OUTPUT\|PREROUTING\)/-I \1 1/"
 		echo 'COMMIT'
 	}
 	local __ipt=""
@@ -1049,11 +1007,10 @@ gen_include() {
 			$(extract_rules 4 mangle)
 			EOT
 
-			[ "$accept_icmp" = "1" ] && \$(${MY_PATH} insert_rule_after "$ipt_n" "PREROUTING" "prerouting_rule" "-p icmp -j PSW2")
-			[ -z "${is_tproxy}" ] && \$(${MY_PATH} insert_rule_after "$ipt_n" "PREROUTING" "prerouting_rule" "-p tcp -j PSW2")
+			[ "$accept_icmp" = "1" ] && \$(${MY_PATH} insert_rule_after "$ipt_n" "PREROUTING" "prerouting_rule" "$(dst $IPSET_DIRECT !) -p icmp -j PSW2")
+			[ -z "${is_tproxy}" ] && \$(${MY_PATH} insert_rule_after "$ipt_n" "PREROUTING" "prerouting_rule" "$(dst $IPSET_DIRECT !) -p tcp -j PSW2")
 
-			\$(${MY_PATH} insert_rule_before "$ipt_m" "PREROUTING" "mwan3" "-j PSW2")
-			\$(${MY_PATH} insert_rule_before "$ipt_m" "PREROUTING" "PSW2" "-p tcp -m socket -j PSW2_DIVERT")
+			\$(${MY_PATH} insert_rule_before "$ipt_m" "PREROUTING" "mwan3" "$(dst $IPSET_DIRECT !) -j PSW2")
 		EOF
 		)
 	}
@@ -1067,10 +1024,9 @@ gen_include() {
 			$(extract_rules 6 mangle)
 			EOT
 
-			[ "$accept_icmpv6" = "1" ] && $ip6t_n -A PREROUTING -p ipv6-icmp -j PSW2
+			[ "$accept_icmpv6" = "1" ] && $ip6t_n -A PREROUTING $(dst $IPSET_DIRECT6 !) -p ipv6-icmp -j PSW2
 
-			\$(${MY_PATH} insert_rule_before "$ip6t_m" "PREROUTING" "mwan3" "-j PSW2")
-			\$(${MY_PATH} insert_rule_before "$ip6t_m" "PREROUTING" "PSW2" "-p tcp -m socket -j PSW2_DIVERT")
+			\$(${MY_PATH} insert_rule_before "$ip6t_m" "PREROUTING" "mwan3" "$(dst $IPSET_DIRECT6 !) -j PSW2")
 		EOF
 		)
 	}
@@ -1101,8 +1057,6 @@ start() {
 stop() {
 	[ -z "$(command -v log_i18n)" ] && . "$UTILS_PATH"
 	del_firewall_rule
-	destroy_ipset $IPSET_PROXY_LAN
-	destroy_ipset $IPSET_PROXY_LAN6
 	[ $(config_t_get global flush_set "0") = "1" ] && {
 		uci -q delete ${CONFIG}.@global[0].flush_set
 		uci -q commit ${CONFIG}
