@@ -6,19 +6,25 @@
 
 include $(TOPDIR)/rules.mk
 
-PKG_NAME:=linkeasefull
-PKG_VERSION:=3.0.4
-PKG_SOURCE_DATE:=$(PKG_VERSION)
-PKG_RELEASE:=3
+PKG_ARCH_LINKEASE:=$(ARCH)
 
+PKG_NAME:=linkeasefull
+# use PKG_SOURCE_DATE instead of PKG_VERSION for compitable
+PKG_SOURCE_DATE:=3.0.20
+PKG_RELEASE:=2
+
+ARCH_HEXCODE:=
 ifeq ($(ARCH),x86_64)
+ARCH_HEXCODE=8664
 LINKEASE_RUNTIME_ARCH:=amd64
-PKG_HASH:=6eebe493f452593889b750a16f6a286fd43411a51a334b0ab8c914e3d96fd670
+PKG_HASH:=f1456c06e3fd5dcdf7fa728fdf102ab4169c0e8ed9308ddae8a9b9faee278dea
 else ifeq ($(ARCH),aarch64)
+ARCH_HEXCODE=aa64
 LINKEASE_RUNTIME_ARCH:=arm64
-PKG_HASH:=947e3305ab78cba8be319b9d59960875c4e2ddb8517b14629504bba0bdc3e8f1
+PKG_HASH:=d3c268aced92425289f968477b5f4d81e6295a10ad39f15773f5eba451f1b5f6
 endif
 
+PKG_SOURCE_VERSION:=$(ARCH_HEXCODE)
 PKG_SOURCE:=linkease-runtime-$(PKG_SOURCE_DATE)-linux-$(LINKEASE_RUNTIME_ARCH).tar.gz
 PKG_SOURCE_URL:=https://github.com/istoreos/istoreos-app-hub/releases/download/linkeasefull-runtime-v$(PKG_SOURCE_DATE)/
 PKG_BUILD_DIR:=$(BUILD_DIR)/linkease-runtime-$(PKG_SOURCE_DATE)-linux-$(LINKEASE_RUNTIME_ARCH)
@@ -33,7 +39,8 @@ define Package/$(PKG_NAME)
 	CATEGORY:=Network
 	SUBMENU:=Web Servers/Proxies
 	TITLE:=LinkEase Full - the local web desktop
-	DEPENDS:=@(x86_64||aarch64) +linkease-common-bin +ca-bundle
+	DEPENDS:=@(x86_64||aarch64) +linkease-common-bin +ca-bundle +cifsmount +kmod-fs-cifs
+	PKGARCH:=all
 	URL:=https://www.linkease.com/
 endef
 

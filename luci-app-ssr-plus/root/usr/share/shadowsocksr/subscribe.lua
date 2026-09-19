@@ -519,7 +519,7 @@ local function anytls_to_mihomo_node(entry)
 		return nil
 	end
 
-	return {
+	local result = {
 		type = "anytls",
 		alias = entry.name,
 		raw_alias = entry.name,
@@ -530,6 +530,12 @@ local function anytls_to_mihomo_node(entry)
 		insecure = entry.allow_insecure and "1" or "0",
 		fingerprint = entry.client_fingerprint
 	}
+
+	local saved_alias = result.alias
+	result.alias = nil
+	result.hashkey = md5(jsonStringify(result) .. "_" .. (saved_alias or ""))
+	result.alias = saved_alias
+	return result
 end
 
 local function split_csv_values(value)
@@ -1708,7 +1714,7 @@ local function processData(szType, content, cfgid)
 			result.quic_security = params.quicSecurity or "none"
 			result.quic_key = params.key
 		elseif result.transport == "grpc" then
-			result.serviceName = params.serviceName
+			result.serviceName = params.servicename
 			result.grpc_mode = params.mode or "gun"
 		elseif result.transport == "tcp" or result.transport == "raw" then
 			result.tcp_guise = params.headerType and params.headerType ~= "" and params.headerType or "none"

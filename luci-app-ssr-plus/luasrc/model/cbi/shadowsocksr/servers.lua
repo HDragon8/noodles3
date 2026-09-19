@@ -29,42 +29,56 @@ local function is_js_luci()
 	return luci.sys.call('[ -f "/www/luci-static/resources/uci.js" ]') == 0
 end
 
--- 保存并应用行为
+-- 默认的保存并应用行为
 local function apply_redirect(m)
-	local tmp_uci_file = "/etc/config/" .. "shadowsocksr" .. "_redirect"
+	local tmp_uci_file = "/etc/config/shadowsocksr_redirect"
 	if m.redirect and m.redirect ~= "" then
+		-- 如果存在临时文件，读取 URL 并通过 luci.http.redirect 跳转
 		if nixio.fs.access(tmp_uci_file) then
-			local redirect
+			local redirect_url
 			for line in io.lines(tmp_uci_file) do
-				redirect = line:match("option%s+url%s+['\"]([^'\"]+)['\"]")
-				if redirect and redirect ~= "" then break end
+				redirect_url = line:match("option%s+url%s+['\"]([^'\"]+)['\"]")
+				if redirect_url and redirect_url ~= "" then break end
 			end
-			if redirect and redirect ~= "" then
-				luci.sys.call("/bin/rm -f " .. tmp_uci_file)
-				luci.http.redirect(redirect)
+			if redirect_url and redirect_url ~= "" then
+				-- 使用 nixio 安全删除文件，替代外部 Shell 命令
+				nixio.fs.remove(tmp_uci_file)
+				-- JS 版 LuCI 依赖 luci.http.redirect 向前端重定向
+				luci.http.redirect(redirect_url)
+				return
 			end
 		else
+			-- 创建标记文件
 			nixio.fs.writefile(tmp_uci_file, "config redirect\n")
 		end
+		-- 挂载保存回调
+		local old_on_after_save = m.on_after_save
 		m.on_after_save = function(self)
-			local redirect = self.redirect
-			if redirect and redirect ~= "" then
-				m.uci:set("shadowsocksr" .. "_redirect", "@redirect[0]", "url", redirect)
+			if old_on_after_save then old_on_after_save(self) end
+			local target = self.redirect
+			if target and target ~= "" then
+				-- 使用标准的 nixio.fs 写入文件，保持格式一致
+				local content = string.format("config redirect\n\toption url '%s'\n", target)
+				nixio.fs.writefile(tmp_uci_file, content)
 			end
 		end
 	else
-		luci.sys.call("/bin/rm -f " .. tmp_uci_file)
+		-- 不满足重定向条件时清理文件
+		if nixio.fs.access(tmp_uci_file) then
+			nixio.fs.remove(tmp_uci_file)
+		end
 	end
 end
 
-local function set_apply_on_parse(map)
-	if not map then return end
-	if is_js_luci() then
-		apply_redirect(map)
-		local old = map.on_after_save
-		map.on_after_save = function(self)
-			if old then old(self) end
-			-- map:set("@global[0]", "timestamp", os.time())
+local function set_apply_on_parse(m)
+	if not m then return end
+	-- is_js_luci 保护
+	if is_js_luci and is_js_luci() then
+		apply_redirect(m)
+		local old_on_after_save = m.on_after_save
+		m.on_after_save = function(self)
+			if old_on_after_save then old_on_after_save(self) end
+			-- m:set("@global[0]", "timestamp", os.time())
 		end
 	end
 end
@@ -174,9 +188,10 @@ local function save_uploaded_clash_node(upload_name, final_path)
 	local alias
 
 	if not sid then
-		sid = uci:add("shadowsocksr", "servers")
+		local sid_output = luci.sys.exec("uci add shadowsocksr servers 2>/dev/null")
+		sid = trim(sid_output)
 	end
-	if not sid then
+	if not sid or sid == "" then
 		return nil
 	end
 
@@ -186,20 +201,50 @@ local function save_uploaded_clash_node(upload_name, final_path)
 		alias = upload_alias(upload_name)
 	end
 
-	uci:set("shadowsocksr", sid, "type", "clash")
-	uci:set("shadowsocksr", sid, "alias", alias)
-	uci:set("shadowsocksr", sid, "server", "127.0.0.1")
-	uci:set("shadowsocksr", sid, "server_port", "0")
-	uci:delete("shadowsocksr", sid, "clash_url")
-	uci:set("shadowsocksr", sid, "clash_path", final_path)
-	uci:set("shadowsocksr", sid, "clash_user_agent", uci:get("shadowsocksr", sid, "clash_user_agent") or "clash")
-	if not uci:get("shadowsocksr", sid, "switch_enable") then
-		uci:set("shadowsocksr", sid, "switch_enable", uci:get_first("shadowsocksr", "server_subscribe", "switch", "1") or "1")
+	local switch_enable = uci:get("shadowsocksr", sid, "switch_enable")
+	if not switch_enable or switch_enable == "" then
+		switch_enable = uci:get_first("shadowsocksr", "server_subscribe", "switch", "1") or "1"
 	end
-	uci:set("shadowsocksr", sid, "yaml_upload", "1")
-	uci:set("shadowsocksr", sid, "yaml_upload_name", upload_name)
-	uci:save("shadowsocksr")
-	uci:commit("shadowsocksr")
+
+	local clash_user_agent = uci:get("shadowsocksr", sid, "clash_user_agent")
+	if not clash_user_agent or clash_user_agent == "" then
+		clash_user_agent = "clash"
+	end
+
+	local safe_sid = luci.util.shellquote(sid)
+	local safe_alias = luci.util.shellquote(alias)
+	local safe_path = luci.util.shellquote(final_path)
+	local safe_upload_name = luci.util.shellquote(upload_name)
+	local safe_switch_enable = luci.util.shellquote(switch_enable)
+	local safe_user_agent = luci.util.shellquote(clash_user_agent)
+
+	local cmd = string.format(
+		"uci set shadowsocksr.%s.type=clash && " ..
+		"uci set shadowsocksr.%s.alias=%s && " ..
+		"uci set shadowsocksr.%s.server=127.0.0.1 && " ..
+		"uci set shadowsocksr.%s.server_port=0 && " ..
+		"uci delete shadowsocksr.%s.clash_url 2>/dev/null; " ..
+		"uci set shadowsocksr.%s.clash_path=%s && " ..
+		"uci set shadowsocksr.%s.clash_user_agent=%s && " ..
+		"uci set shadowsocksr.%s.switch_enable=%s && " ..
+		"uci set shadowsocksr.%s.yaml_upload=1 && " ..
+		"uci set shadowsocksr.%s.yaml_upload_name=%s && " ..
+		"uci commit shadowsocksr",
+		safe_sid,
+		safe_sid, safe_alias,
+		safe_sid,
+		safe_sid,
+		safe_sid,
+		safe_sid, safe_path,
+		safe_sid, safe_user_agent,
+		safe_sid, safe_switch_enable,
+		safe_sid,
+		safe_sid, safe_upload_name
+	)
+
+	if luci.sys.call(cmd) ~= 0 then
+		return nil
+	end
 
 	cleanup_old_clash_path(old_path, final_path, sid)
 	luci.sys.call(string.format("/etc/init.d/shadowsocksr clash_cache %s >/dev/null 2>&1 &", luci.util.shellquote(sid)))
@@ -253,32 +298,48 @@ if has_mihomo then
 			local tmp_output = string.format("%s/.upload-%d-%d.yaml", CLASH_YAML_DIR, nixio.getpid(), os.time())
 			local sid
 			local alias
+			local redirect_message_url
 
 			nixio.fs.mkdirr(CLASH_YAML_DIR)
 			nixio.fs.remove(tmp_output)
 			if preprocess_clash_yaml(upload_tmp_path, tmp_output) then
 				hash = hash_file(tmp_output)
-				if hash == "" then
-					nixio.fs.remove(tmp_output)
+				if not hash or hash == "" then
 					upload_errmessage = translate("Uploaded YAML validation or preprocessing failed.")
 				else
 					final_path = string.format("%s/%s.yaml", CLASH_YAML_DIR, hash)
-					luci.sys.call(string.format("mv -f %s %s", luci.util.shellquote(tmp_output), luci.util.shellquote(final_path)))
-					sid, alias = save_uploaded_clash_node(upload_filename, final_path)
-					if sid then
-						upload_message = string.format(translate("Custom YAML imported successfully: %s"), alias or sid)
+					local mv_ret = luci.sys.call(string.format("mv -f %s %s", luci.util.shellquote(tmp_output), luci.util.shellquote(final_path)))
+					if mv_ret == 0 and nixio.fs.access(final_path) then
+						sid, alias = save_uploaded_clash_node(upload_filename, final_path)
+						if sid then
+							local message = string.format(translate("Custom YAML imported successfully: %s"), alias or sid)
+							local redirect_url = luci.dispatcher.build_url("admin", "services", "shadowsocksr", "servers")
+							redirect_message_url = redirect_url .. "?upload_message=" .. luci.http.urlencode(message)
+						else
+							upload_errmessage = translate("Uploaded YAML validation or preprocessing failed.")
+							if final_path and nixio.fs.access(final_path) then
+								nixio.fs.remove(final_path)
+							end
+						end
 					else
-						upload_errmessage = translate("Uploaded YAML validation or preprocessing failed.")
+						upload_errmessage = translate("Failed to move uploaded YAML to target directory.")
 					end
 				end
 			else
-				nixio.fs.remove(tmp_output)
-				upload_errmessage = translate("Uploaded YAML validation or preprocessing failed.")
+				upload_errmessage = upload_errmessage or translate("Uploaded YAML validation or preprocessing failed.")
 			end
-		end
 
-		if upload_tmp_path then
-			nixio.fs.remove(upload_tmp_path)
+			if upload_tmp_path and nixio.fs.access(upload_tmp_path) then
+				nixio.fs.remove(upload_tmp_path)
+			end
+			if tmp_output and nixio.fs.access(tmp_output) then
+				nixio.fs.remove(tmp_output)
+			end
+
+			if redirect_message_url then
+				luci.http.redirect(redirect_message_url)
+				return
+			end
 		end
 	end
 end
@@ -393,8 +454,11 @@ end
 m = Map("shadowsocksr", translate("Servers subscription and manage"))
 if upload_errmessage then
 	m.errmessage = upload_errmessage
-elseif upload_message then
-	m.message = upload_message
+else
+	local message = luci.http.formvalue("upload_message")
+	if message and message ~= "" then
+		m.message = message
+	end
 end
 
 local style_section = m:section(SimpleSection)
@@ -551,6 +615,29 @@ if has_mihomo then
 	o.default = "0"
 	o.rmempty = true
 	o.description = translate("Disabled means use Xray or ShadowSocks-Rust core.")
+
+	o = s:option(Flag, "enable_fake_ip", string.format("<b><span style='color:red;'>%s</span></b>", translate("Enable Fake-IP Mode")))
+	o.default = "0"
+	o.rmempty = true
+	o:depends("enable_mihomo", "1")
+	o.description = translate(
+		"<ul>" ..
+		"<li>" .. translate("Enable Fake-IP mode; disable to use redir-host mode.") .. "</li>" ..
+		"<li>" .. translate("Enable Fake-IP mode for better performance.") .. "</li>" ..
+		"<li>" .. translate("If disabled, Redir-Host mode will be used which returns real IP addresses.") .. "</li>" ..
+		"<li>" .. translate("Tips: Fake-IP Filter and Fallback Lists:") .. " " ..
+		"<span id='fake_ip_filter_control_link'></span>" ..
+		"<script type='text/javascript'>" ..
+			"(function() {" ..
+				"var url = '" .. luci.dispatcher.build_url("admin", "services", "shadowsocksr", "control") .. "?tab=fake_ip_filter#fake_ip_filter';" ..
+				"var linkText = '<font style=\"color:green\"><b>" .. translate("Click here to manage") .. "</b></font>';" ..
+				"var elem = document.getElementById('fake_ip_filter_control_link');" ..
+				"if (elem) elem.innerHTML = '<a href=\"' + url + '\">' + linkText + '</a>';" ..
+			"})();" ..
+		"</script>" ..
+		"</li>" ..
+		"</ul>"
+	)
 
 	o = s:option(Flag, "sub_convert", translate("Subscribe Convert Online"))
 	o.description = translate("Convert subscriptions to Clash/Mihomo YAML with a subscription template URL.")
