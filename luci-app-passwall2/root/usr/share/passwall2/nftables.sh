@@ -149,7 +149,7 @@ gen_nft_tables() {
 
 insert_nftset() {
 	local nftset_name="${1}"; shift
-	local timeout_argument="${1}"; shift
+	local timeout_argument="${1:--1}"; shift
 	local default_timeout="365d"
 	local suffix=""
 
@@ -692,13 +692,13 @@ update_wan_sets() {
 		local WAN_IP=$(get_wan_ips ip4)
 		[ -n "$WAN_IP" ] && {
 			# nft flush set $NFTABLE_NAME $NFTSET_WAN
-			echo "$WAN_IP" | insert_nftset $NFTSET_WAN
+			echo "$WAN_IP" | insert_nftset $NFTSET_WAN "-1"
 		}
 
 		local WAN6_IP=$(get_wan_ips ip6)
 		[ -n "${WAN6_IP}" ] && {
 			# nft flush set $NFTABLE_NAME $NFTSET_WAN6
-			echo "$WAN6_IP" | insert_nftset $NFTSET_WAN6
+			echo "$WAN6_IP" | insert_nftset $NFTSET_WAN6 "-1"
 		}
 	) 9>"${LOCK_PATH}/${CONFIG}_update_wan_sets.lock"
 }
@@ -901,6 +901,9 @@ add_firewall_rule() {
 	load_acl
 
 	filter_direct_node_list > /dev/null 2>&1 &
+
+	nft "insert rule $NFTABLE_NAME mangle_output meta skgid $DIRECT_GID counter return comment \"PSW2_DIRECT\""
+	nft "insert rule $NFTABLE_NAME nat_output meta skgid $DIRECT_GID counter return comment \"PSW2_DIRECT\""
 
 	log_i18n 0 "%s firewall rules load complete!" "nftables"
 }
