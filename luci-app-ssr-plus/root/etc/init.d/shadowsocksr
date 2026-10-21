@@ -127,7 +127,39 @@ uci_get_by_cfgid() {
 	echo "${ret:=$3}"
 }
 
+ipv6_enabled() {
+	[ "$(uci_get_by_type global ipv6_support 0)" = "1" ] && [ "$USE_TABLES" = "nftables" ]
+}
+
+ipt2socks_listen_args() {
+	if ipv6_enabled; then
+		echo "-b 0.0.0.0 -B ::"
+	else
+		echo "-b 0.0.0.0 -4"
+	fi
+}
+
+# Restore the user's global AAAA filter when IPv6 proxying is stopped.
+set_ipv6_dns_filter() {
+	local saved
+	saved="$(uci -q get 'dhcp.@dnsmasq[0]._ssrp_filter_aaaa')"
+	if [ "$1" = "start" ] && ipv6_enabled; then
+		if [ "$(uci -q get 'dhcp.@dnsmasq[0].filter_aaaa')" = "1" ]; then
+			uci set 'dhcp.@dnsmasq[0]._ssrp_filter_aaaa=1'
+			uci set 'dhcp.@dnsmasq[0].filter_aaaa=0'
+			uci commit dhcp
+		fi
+	elif [ -n "$saved" ]; then
+		if [ "$(uci -q get 'dhcp.@dnsmasq[0].filter_aaaa')" = "0" ]; then
+			uci set "dhcp.@dnsmasq[0].filter_aaaa=$saved"
+		fi
+		uci delete 'dhcp.@dnsmasq[0]._ssrp_filter_aaaa'
+		uci commit dhcp
+	fi
+}
+
 get_filter_aaaa() {
+	ipv6_enabled && { echo 0; return; }
 	local ret
 	ret="$(uci get "$NAME.@global[0].filter_aaaa" 2>/dev/null)"
 	[ -z "$ret" ] && ret="$(uci get "$NAME.@global[0].mosdns_ipv6" 2>/dev/null)"
@@ -636,7 +668,8 @@ prepare_clash_runtime_config() {
 		external-controller: 127.0.0.1:$CLASH_API_PORT
 		secret: $clash_secret
 		allow-lan: true
-		bind-address: 0.0.0.0
+		bind-address: "$(ipv6_enabled && echo '*' || echo '0.0.0.0')"
+		ipv6: $(ipv6_enabled && echo true || echo false)
 		routing-mark: $CLASH_OUTBOUND_MARK
 		profile:
 		  store-selected: true
@@ -651,6 +684,24 @@ prepare_clash_runtime_config() {
 
 	if [ -n "$socks_port" ] && [ "$socks_port" != "0" ]; then
 		echo "socks-port: $socks_port" >>"$overlay_file"
+
+		socks5_auth="$(uci_get_by_type socks5_proxy socks5_auth noauth)"
+		socks5_user="$(uci_get_by_type socks5_proxy socks5_user "")"
+		socks5_pass="$(uci_get_by_type socks5_proxy socks5_pass "")"
+
+		if [ "$socks5_auth" = "password" ]; then
+			if [ -z "$socks5_user" ] || [ -z "$socks5_pass" ]; then
+				echolog "警告：SOCKS5 代理未完整配置用户名或密码，已自动降级为无认证模式 (noauth)！"
+				socks5_auth="noauth"
+			fi
+		fi
+
+		if [ "$socks5_auth" = "password" ]; then
+			cat >>"$overlay_file" <<-EOF
+				authentication:
+				  - "$socks5_user:$socks5_pass"
+			EOF
+		fi
 	fi
 
 	merge_stats="$(/usr/bin/lua "$CLASH_YAML_HELPER" merge "$raw_file" "$overlay_file" "$runtime_file" 2>/dev/null)" || return 1
@@ -762,7 +813,12 @@ get_host_ip() {
 		ip="$host"
 	elif ! echo "$host" | grep -q ':'; then
 		ip=$(resolveip -4 -t 3 "$host" | awk 'NR==1{print}')
+		if [ -z "$ip" ] && ipv6_enabled; then
+			ip=$(resolveip -6 -t 3 "$host" | awk 'NR==1{print}')
+		fi
 		[ -z "$ip" ] && ip=$(curl -sSL "http://119.29.29.29/d?dn=$host" | awk -F ';' '{print $1}')
+	elif ipv6_enabled; then
+		ip="$host"
 	fi
 	[ -z "$ip" ] || uci_set_by_name "$1" ip "$ip"
 	[ -n "$ip" ] || ip=""
@@ -936,6 +992,10 @@ use_mihomo_for_ss_rust_server() {
 }
 
 start_v2ray_with_mihomo() {
+	[ "$(uci_get_by_name "$1" transport)" = "kcptun" ] && return 1
+	[ "$(uci_get_by_name "$1" xray_shadowtls 0)" = "1" ] && return 1
+	# These nodes use Xray-specific settings.
+	case "$(uci_get_by_name "$1" v2ray_protocol)" in naive|shadowsocksr|tuic) return 1 ;; esac
 	local sid="$1"
 	local local_port="$2"
 	local socks_port="$3"
@@ -965,20 +1025,27 @@ start_socks5_udp_with_ipt2socks() {
 	local local_port="$2"
 	local threads="$3"
 	local ipt2socks_bin
-	local auth_opts=""
+	local server_ip
 	local _i
 
 	ipt2socks_bin="$(first_type ipt2socks)"
+	server_ip="$(get_host_ip "$sid")"
 
 	[ -x "$ipt2socks_bin" ] || return 1
+	[ -n "$server_ip" ] || {
+		echolog "UDP TPROXY Relay:Socks5 无法解析服务器地址。"
+		return 1
+	}
+	set --
 	if [ "$(uci_get_by_name "$sid" auth_enable 0)" = "1" ]; then
-		auth_opts="-a $(uci_get_by_name "$sid" username) -k $(uci_get_by_name "$sid" password)"
+		set -- -a "$(uci_get_by_name "$sid" username)" \
+			-k "$(uci_get_by_name "$sid" password)"
 	fi
 	for _i in $(seq 1 "$threads"); do
-		ln_start_bin "$ipt2socks_bin" ipt2socks -U -r -b 0.0.0.0 -4 \
-			-s "$(uci_get_by_name "$sid" server)" \
+		ln_start_bin "$ipt2socks_bin" ipt2socks -U -r $(ipt2socks_listen_args) \
+			-s "$server_ip" \
 			-p "$(uci_get_by_name "$sid" server_port)" \
-			-l "$local_port" "$auth_opts"
+			-l "$local_port" "$@"
 	done
 	echolog "UDP TPROXY Relay:Socks5 via IPT2Socks $threads Threads Started!"
 	return 0
@@ -989,21 +1056,28 @@ start_socks5_redir_with_ipt2socks() {
 	local local_port="$2"
 	local threads="$3"
 	local ipt2socks_bin
-	local auth_opts=""
+	local server_ip
 	local _i
 
 	ipt2socks_bin="$(first_type ipt2socks)"
+	server_ip="$(get_host_ip "$sid")"
 
 	[ -x "$ipt2socks_bin" ] || return 1
+	[ -n "$server_ip" ] || {
+		echolog "Main node:Socks5 无法解析服务器地址。"
+		return 1
+	}
+	set --
 	if [ "$(uci_get_by_name "$sid" auth_enable 0)" = "1" ]; then
-		auth_opts="-a $(uci_get_by_name "$sid" username) -k $(uci_get_by_name "$sid" password)"
+		set -- -a "$(uci_get_by_name "$sid" username)" \
+			-k "$(uci_get_by_name "$sid" password)"
 	fi
 	for _i in $(seq 1 "$threads"); do
 		ln_start_bin "$ipt2socks_bin" ipt2socks \
-			-T -R -r -b 0.0.0.0 -4 \
-			-s "$(uci_get_by_name "$sid" server)" \
+			-T -R -r $(ipt2socks_listen_args) \
+			-s "$server_ip" \
 			-p "$(uci_get_by_name "$sid" server_port)" \
-			-l "$local_port" "$auth_opts"
+			-l "$local_port" "$@"
 	done
 	echolog "Main node:Socks5 via IPT2Socks $threads Threads Started!"
 	return 0
@@ -1154,6 +1228,12 @@ normalize_xray_protocol_nodes() {
 				changed=1
 			fi
 		fi
+		if [ "$type" = "anytls" ]; then
+			uci -q set "$NAME.$section.type=v2ray"
+			uci -q set "$NAME.$section.v2ray_protocol=anytls"
+			[ -n "$(uci_get_by_name "$section" tls)" ] || uci -q set "$NAME.$section.tls=1"
+			changed=1
+		fi
 		if [ "$type" = "hysteria2" ]; then
 			echolog "提示：检测到原生 Hysteria2 节点，自动迁移为 Xray(Hysteria2)。"
 			uci -q set "$NAME.$section.type=v2ray"
@@ -1186,6 +1266,12 @@ normalize_xray_protocol_nodes() {
 }
 
 add_dns_into_ipset() {
+	if [ "$USE_TABLES" = "nftables" ]; then
+		# GFW mode must proxy the resolver before any domain can populate the set.
+		# Other nft modes already proxy destinations outside the bypass sets.
+		[ "$1" = "gfw" ] && nft add element inet ss_spec gfwlist "{ ${2%:*} }" 2>/dev/null
+		return 0
+	fi
 	case "$1" in
 	gfw) ipset add gfwlist "${2%:*}" 2>/dev/null ;;
 	*) ipset add ss_spec_wan_ac "${2%:*}" nomatch 2>/dev/null ;;
@@ -1243,10 +1329,8 @@ start_dns() {
 	if [ "$builtin_dns_enabled" = "1" ]; then
 		pdnsd_enable_flag=7
 	elif [ "$ssrplus_dns" != "0" ]; then
-		if [ "$HAS_IPSET" -eq 1 ]; then
-			if [ -n "$dnsserver" ]; then
-				add_dns_into_ipset "$run_mode" "$dnsserver"
-			fi
+		if [ -n "$dnsserver" ]; then
+			add_dns_into_ipset "$run_mode" "$dnsserver"
 		fi
 		case "$ssrplus_dns" in
 		1)
@@ -1259,9 +1343,7 @@ start_dns() {
 			output=$(for i in $(echo "$mosdns_dnsserver" | sed "s/,/ /g"); do
 				dnsserver="${i%:*}"
 				dnsserver="${i##*/}"
-				if [ "$HAS_IPSET" -eq 1 ]; then
-					add_dns_into_ipset "$run_mode" "$dnsserver"
-				fi
+				add_dns_into_ipset "$run_mode" "$dnsserver"
 				echo "            - addr: $i"
 				echo "              enable_pipeline: true"
 			done)
@@ -1281,29 +1363,39 @@ start_dns() {
 			# 遍历每个 DNS 服务器
 			IFS=','  # 设置分隔符为逗号
 			for chinadns_ng_server in $dnsserver; do
+				chinadns_ng_server="$(echo "$chinadns_ng_server" | sed 's/[[:space:]]//g')"
+				[ -z "$chinadns_ng_server" ] && continue
 				# 处理单个服务器地址
 				chinadns_ng_ip="${chinadns_ng_server%%:*}"
 				chinadns_ng_port="${chinadns_ng_server##*:}"
+
+				# 如果没有显式指定端口，根据协议填入默认端口
 				[ "$chinadns_ng_ip" = "$chinadns_ng_port" ] && chinadns_ng_port="53"
-				chinadns_ng_tls_port="853"
+				# TLS 协议强制使用 853 端口（DoT 标准端口），忽略用户指定的端口
+				[ "$chinadns_ng_proto" = "tls" ] && chinadns_ng_port="853"
 				# 根据协议类型格式化服务器地址
 				case "$chinadns_ng_proto" in
 					"none")
-            					chinadns_ng_server="${chinadns_ng_ip}#${chinadns_ng_port}"
-            					;;
+						chinadns_ng_server="${chinadns_ng_ip}#${chinadns_ng_port}"
+						;;
 					"tls")
-            					chinadns_ng_server="${chinadns_ng_proto}://${chinadns_ng_ip}#${chinadns_ng_tls_port}"
-            					;;
+						chinadns_ng_server="${chinadns_ng_proto}://${chinadns_ng_ip}#${chinadns_ng_port}"
+						;;
 					*)
-            					chinadns_ng_server="${chinadns_ng_proto}://${chinadns_ng_ip}#${chinadns_ng_port}"
-            					;;
+						chinadns_ng_server="${chinadns_ng_proto}://${chinadns_ng_ip}#${chinadns_ng_port}"
+						;;
 				esac
 				# 添加到参数列表
 				chinadns_ng_dns="${chinadns_ng_dns} -t ${chinadns_ng_server}"
 			done
 			unset IFS  # 恢复默认分隔符
+
 			dnsserver="$chinadns_ng_dns"
-			ln_start_bin "$(first_type chinadns-ng)" chinadns-ng -b 127.0.0.1 -l "$tmp_dns_port" -l "$dns_port" -p 3 -d gfw "$dnsserver" -N --filter-qtype 64,65 -f -r --cache 4096 --cache-stale 86400 --cache-refresh 20
+			# $dnsserver holds a list of "-t <server>" arguments built above, so it
+			# has to stay unquoted and word-split into separate arguments
+			# shellcheck disable=SC2086
+			ln_start_bin "$(first_type chinadns-ng)" chinadns-ng -b 127.0.0.1 -l "$dns_port" -p 3 -d gfw $dnsserver -N --filter-qtype 64,65 -f -r --cache 4096 --cache-stale 86400 --cache-refresh 20 --verdict-cache 4096
+			ln_start_bin "$(first_type chinadns-ng)" chinadns-ng -b 127.0.0.1 -l "$tmp_dns_port" -p 3 -d gfw $dnsserver -N --filter-qtype 64,65 -f -r --cache 4096 --cache-stale 86400 --cache-refresh 20 --verdict-cache 4096
 			echolog "ChinaDNS-NG query and cache Started!"
 			pdnsd_enable_flag=6
 			;;
@@ -1318,8 +1410,30 @@ start_dns() {
 				"wan_114") chinadns="$wandns,114.114.114.114" ;;
 				esac
 
-				filtered_chinadns=$(echo "$chinadns" | sed 's/:/#/')
-				ln_start_bin "$(first_type chinadns-ng)" chinadns-ng -l "$china_dns_port" -4 china -p 3 -c "$filtered_chinadns" -t "127.0.0.1#$dns_port" -N -f -r
+				filtered_chinadns=""
+				IFS=','
+				for chinadns_ip in $chinadns; do
+					# 过滤可能的前后空白字符
+					chinadns_ip="$(echo "$chinadns_ip" | sed 's/[[:space:]]//g')"
+					[ -z "$chinadns_ip" ] && continue
+
+					# 将 IP:PORT 格式转换为 IP#PORT（若无端口默认使用 53）
+					if echo "$chinadns_ip" | grep -q "#"; then
+						: # 已是 IP#PORT 格式，无需更改
+					elif echo "$chinadns_ip" | grep -qE ':[0-9]+$'; then
+						chinadns_ip="$(echo "$chinadns_ip" | sed -E 's/:([0-9]+)$/#\1/')"
+					else
+						chinadns_ip="${chinadns_ip}#53"
+					fi
+					filtered_chinadns="${filtered_chinadns} -c ${chinadns_ip}"
+				done
+				unset IFS
+
+				if [ "$USE_TABLES" = "iptables" ]; then
+					ln_start_bin "$(first_type chinadns-ng)" chinadns-ng -l "$china_dns_port" -4 china -p 3 $filtered_chinadns -t "127.0.0.1#$dns_port" -N -f -r --cache 4096 --cache-stale 86400 --cache-refresh 20 --verdict-cache 4096
+				elif [ "$USE_TABLES" = "nftables" ]; then
+					ln_start_bin "$(first_type chinadns-ng)" chinadns-ng -l "$china_dns_port" -4 inet@ss_spec@china -p 3 $filtered_chinadns -t "127.0.0.1#$dns_port" -N -f -r --cache 4096 --cache-stale 86400 --cache-refresh 20 --verdict-cache 4096
+				fi
 
 				cat <<-EOF >> "$TMP_DNSMASQ_PATH/chinadns_fixed_server.conf"
 					no-poll
@@ -1452,21 +1566,21 @@ generate_xray_config() {
 			fi
 			;;
 	esac
-	
-	cat > "$config_file" << EOF
-{
-	"log": {
-		"loglevel": "warning"
-	},
-	"inbounds": [$inbound_json],
-	"outbounds": [
+
+	cat <<-EOF >"$config_file"
 		{
-			"protocol": "freedom",
-			"settings": {}
-		}
-	]
-}
-EOF
+			"log": {
+				"loglevel": "warning"
+		},
+		"inbounds": [$inbound_json],
+		"outbounds": [
+			{
+				"protocol": "freedom",
+				"settings": {}
+			}
+		]
+	}
+	EOF
 	return 0
 }
 
@@ -1686,7 +1800,7 @@ start_udp() {
 		;;
 	v2ray)
 		enable_mihomo=$(uci_get_by_type server_subscribe enable_mihomo "")
-		if [ "$enable_mihomo" = "1" ] && has_mihomo_binary; then
+		if [ "$(uci_get_by_name "$UDP_RELAY_SERVER" v2ray_protocol)" != "naive" ] && [ "$(uci_get_by_name "$UDP_RELAY_SERVER" v2ray_protocol)" != "shadowsocksr" ] && [ "$(uci_get_by_name "$UDP_RELAY_SERVER" v2ray_protocol)" != "tuic" ] && [ "$enable_mihomo" = "1" ] && has_mihomo_binary; then
 			redir_udp=0
 			ARG_UDP=""
 			echolog "UDP TPROXY Relay:V2Ray/Xray 单节点由主 Mihomo 实例处理。"
@@ -1699,7 +1813,7 @@ start_udp() {
 				echolog "UDP TPROXY Relay:$($(first_type xray) version | head -1) Started!"
 			else
 				# Xray 不存在但 Mihomo 存在，回退到 Mihomo（当 enable_mihomo=0 时）
-				if has_mihomo_binary; then
+				if [ "$(uci_get_by_name "$UDP_RELAY_SERVER" v2ray_protocol)" != "naive" ] && [ "$(uci_get_by_name "$UDP_RELAY_SERVER" v2ray_protocol)" != "shadowsocksr" ] && [ "$(uci_get_by_name "$UDP_RELAY_SERVER" v2ray_protocol)" != "tuic" ] && has_mihomo_binary; then
 					redir_udp=0
 					ARG_UDP=""
 					echolog "UDP TPROXY Relay:Xray 内核不存在，已回退到 Mihomo 内核启动。"
@@ -1713,7 +1827,7 @@ start_udp() {
 	trojan) #client
 		gen_config_file "$UDP_RELAY_SERVER" "$type" 2 "$tmp_udp_local_port"
 		ln_start_bin "$(first_type trojan)" "$type" --config "$udp_config_file"
-		ln_start_bin "$(first_type ipt2socks)" ipt2socks -U -b 0.0.0.0 -4 -s 127.0.0.1 -p "$tmp_udp_local_port" -l "$tmp_udp_port"
+		ln_start_bin "$(first_type ipt2socks)" ipt2socks -U $(ipt2socks_listen_args) -s 127.0.0.1 -p "$tmp_udp_local_port" -l "$tmp_udp_port"
 		echolog "UDP TPROXY Relay:$($(first_type trojan) --version 2>&1 | head -1) Started!"
 		;;
 	naiveproxy)
@@ -1850,9 +1964,6 @@ start_local() {
 		[ -n "$probe_instance_key" ] && instance_key="$probe_instance_key"
 		if [ "$enable_mihomo" = "1" ] && start_v2ray_with_mihomo "$LOCAL_SERVER" "$local_port" "$local_port" "$instance_key" "socks" "v2ray-local" "Global_Socks5"; then
 			:
-		elif [ "$(uci_get_by_name "$LOCAL_SERVER" v2ray_protocol)" = "snell" ]; then
-			echolog "Global_Socks5:Snell 需要 Mihomo 内核，且当前 Mihomo 启动失败。"
-			return 1
 		elif [ "$_local" = "2" ]; then
 			# 尝试 Xray
 			xray_bin="$(first_type xray)"
@@ -2138,7 +2249,18 @@ get_udp_relay_mode() {
 		;;
 	v2ray)
 		proto=$(uci_get_by_name "$node" v2ray_protocol)
+		if [ "$(uci_get_by_name "$node" transport)" = "kcptun" ]; then
+			case "$proto" in vmess|vless|trojan) echo "native" ;; *) echo "disabled" ;; esac
+			return
+		fi
 		case "$proto" in
+		snell)
+			case "$(uci_get_by_name "$node" snell_version 4)" in 1|2) echo "disabled" ;; *) echo "native" ;; esac
+			;;
+		naive)
+			[ "$(uci_get_by_name "$node" naive_udp_over_tcp 0)" = "1" ] && echo "native" || echo "disabled"
+			;;
+
 		http)
 			echo "disabled"
 			;;
@@ -2270,11 +2392,8 @@ Start_Run() {
 		enable_mihomo=$(uci_get_by_type server_subscribe enable_mihomo "")
 		if [ "$enable_mihomo" = "1" ] && start_v2ray_with_mihomo "$GLOBAL_SERVER" "$tcp_port" "$socks_port" "$GLOBAL_SERVER" "redir" "ssr-retcp" "Main node"; then
 			:
-		elif [ "$(uci_get_by_name "$GLOBAL_SERVER" v2ray_protocol)" = "snell" ]; then
-			echolog "Main node:Snell 需要 Mihomo 内核，且当前 Mihomo 启动失败。"
-			return 1
 		else
-			# enable_mihomo=0 或 Mihomo 启动失败（非 Snell）→ 优先使用 Xray
+			# enable_mihomo=0 或 Mihomo 启动失败 → 优先使用 Xray
 			xray_bin="$(first_type xray)"
 			if [ -n "$xray_bin" ]; then
 				gen_config_file "$GLOBAL_SERVER" "$type" 1 "$tcp_port" "$socks_port"
@@ -2541,7 +2660,6 @@ start_server() {
 		local listenip
 		local username
 		local password
-		local auth_opts
 		local enable_mihomo
 		local mihomo_server_started
 		local xray_bin
@@ -2608,18 +2726,75 @@ start_server() {
 			fi
 			;;
 		socks5)
-			listenip='-i 0.0.0.0'
-			[ -e /proc/sys/net/ipv6 ] && listenip='-i ::'
+			listenip='0.0.0.0'
+			[ -e /proc/sys/net/ipv6 ] && listenip='::'
 			username=$(uci_get_by_name "$1" username)
 			password=$(uci_get_by_name "$1" password)
-			auth_opts=""
-			if [ -n "$username" ]; then
-				auth_opts="-u $username"
-				[ -n "$password" ] && auth_opts="$auth_opts -P $password"
+			if { [ -n "$username" ] && [ -z "$password" ]; } ||
+				{ [ -z "$username" ] && [ -n "$password" ]; }; then
+				echolog "Server:Socks5 Server$server_count 用户名和密码必须同时配置。"
+				return 1
 			fi
-			ln_start_bin "$(first_type microsocks)" microsocks "$listenip" -p "$(uci_get_by_name "$1" server_port)" -1 "$auth_opts" ssr-server$server_count
+			if [ -n "$username" ]; then
+				ln_start_bin "$(first_type microsocks)" "ssr-server-$server_count" \
+					-i "$listenip" -p "$(uci_get_by_name "$1" server_port)" \
+					-1 -u "$username" -P "$password"
+			else
+				ln_start_bin "$(first_type microsocks)" "ssr-server-$server_count" \
+					-i "$listenip" -p "$(uci_get_by_name "$1" server_port)"
+			fi
 			echolog "Server:Socks5 Server$server_count Started!"
 			;;
+		naive)
+			xray_bin="$(first_type xray)"
+			[ -x "$xray_bin" ] || return 1
+			config_file="$TMP_PATH/xray-server-$server_count.json"
+			lua /usr/share/shadowsocksr/gen_naive_server.lua "$1" > "$config_file" || return 1
+			"$xray_bin" run -test -c "$config_file" >> /var/ssrplus.log 2>&1 || return 1
+			ln_start_bin "$xray_bin" xray-server-$server_count run -c "$config_file"
+			echolog "Server: Xray NaiveProxy Server$server_count Started!"
+			;;
+
+		ssr-xray)
+			xray_bin="$(first_type xray)"
+			[ -x "$xray_bin" ] || return 1
+			config_file="$TMP_PATH/xray-server-$server_count.json"
+			lua /usr/share/shadowsocksr/gen_ssr_server.lua "$1" > "$config_file" || return 1
+			"$xray_bin" run -test -c "$config_file" >> /var/ssrplus.log 2>&1 || return 1
+			ln_start_bin "$xray_bin" xray-server-$server_count run -c "$config_file"
+			echolog "Server: Xray ShadowsocksR Server$server_count Started!"
+			;;
+
+		anytls)
+			xray_bin="$(first_type xray)"
+			[ -x "$xray_bin" ] || return 1
+			config_file="$TMP_PATH/xray-server-$server_count.json"
+			lua /usr/share/shadowsocksr/gen_anytls_server.lua "$1" > "$config_file" || return 1
+			"$xray_bin" run -test -c "$config_file" >> /var/ssrplus.log 2>&1 || return 1
+			ln_start_bin "$xray_bin" xray-server-$server_count run -c "$config_file"
+			echolog "Server: Xray AnyTLS Server$server_count Started!"
+			;;
+
+		snell)
+			xray_bin="$(first_type xray)"
+			[ -x "$xray_bin" ] || return 1
+			config_file="$TMP_PATH/xray-server-$server_count.json"
+			lua /usr/share/shadowsocksr/gen_snell_server.lua "$1" > "$config_file" || return 1
+			"$xray_bin" run -test -c "$config_file" >> /var/ssrplus.log 2>&1 || return 1
+			ln_start_bin "$xray_bin" xray-server-$server_count run -c "$config_file"
+			echolog "Server: Xray Snell Server$server_count Started!"
+			;;
+
+		tuic)
+			xray_bin="$(first_type xray)"
+			[ -x "$xray_bin" ] || return 1
+			config_file="$TMP_PATH/xray-server-$server_count.json"
+			lua /usr/share/shadowsocksr/gen_tuic_server.lua "$1" > "$config_file" || return 1
+			"$xray_bin" run -test -c "$config_file" >> /var/ssrplus.log 2>&1 || return 1
+			ln_start_bin "$xray_bin" xray-server-$server_count run -c "$config_file"
+			echolog "Server: Xray TUIC Server$server_count Started!"
+			;;
+
 		vmess|vless|trojan|shadowsocks)
 			# Xray 服务端支持
 			port=$(uci_get_by_name "$1" server_port)
@@ -2858,8 +3033,8 @@ start_rules() {
 		esac
 	}
 
-	if [ "$(uci_get_by_type global dports)" = "3" ]; then
-		custom_ports=$(uci_get_by_name "$GLOBAL_SERVER" custom_ports)  #  custom_ports 存储了用户自定义的端口
+	if [ "$(uci_get_by_type global dports 1)" = "3" ]; then
+		custom_ports=$(uci_get_by_type global custom_ports)  #  custom_ports 存储了用户自定义的端口
 		if [ -n "$custom_ports" ]; then
 			proxyport="-m multiport --dports $custom_ports"
 		fi
@@ -2901,7 +3076,7 @@ start_rules() {
 			-G "$(uci_get_by_type access_control lan_gm_ips)" \
 			-m "$(uci_get_by_type access_control Interface)" \
 			-D "$proxyport" \
-			"$(get_arg_out)" "$(gfwmode)" "$ARG_UDP" "$ARG_UDP_RULES" "$ARG_A"
+			$(get_arg_out) $(gfwmode) $ARG_UDP $ARG_UDP_RULES $ARG_A
 
 		return $?
 	}
@@ -2918,6 +3093,11 @@ start() {
 	mkdir -p /var/run /var/lock /var/log "$DNSMASQ_CONF_DIR" "$TMP_BIN_PATH" "$TMP_DNSMASQ_PATH" "$CLASH_CONFIG_DIR"
 	echo "conf-dir=${TMP_DNSMASQ_PATH}" >"$DNSMASQ_CONF_DIR/dnsmasq-ssrplus.conf"
 	check_run_environment
+	if [ "$(uci_get_by_type global ipv6_support 0)" = "1" ] && [ "$USE_TABLES" != "nftables" ]; then
+		echolog "ERROR: IPv6 透明代理需要 nftables 后端。"
+		unset_lock
+		return 1
+	fi
 	normalize_run_mode >/dev/null
 	normalize_xray_protocol_nodes
 
@@ -2927,10 +3107,20 @@ start() {
 		Start_Run
 		start_http_proxy
 		start_xhttp_addr
-		start_rules
+		if ! start_rules; then
+			echolog "ERROR: 无法安装透明代理规则，启动中止。"
+			unset_lock
+			stop
+			return 1
+		fi
+		set_ipv6_dns_filter start
 		start_dns
+		# Include resolver bootstrap addresses in the firewall reload snapshot.
+		if [ "$USE_TABLES" = "nftables" ]; then
+			/usr/bin/ssr-rules -P >/dev/null 2>&1
+		fi
 		# Restore ipsets after rules creation
-		if [ "$HAS_IPSET" -eq 1 ]; then
+		if [ "$USE_TABLES" = "iptables" ]; then
 			for setname in gfwlist china blacklist whitelist; do
 				[ "$setname" = "gfwlist" ] && [ "$run_mode" != "gfw" ] && continue
 				if [ -f "/tmp/ssrplus_save/${setname}.save" ]; then
@@ -3023,7 +3213,7 @@ stop() {
 	set_lock
 	check_run_environment
 	# Save ipsets before stopping to persist transparent proxy state
-	if [ "$HAS_IPSET" -eq 1 ]; then
+	if [ "$USE_TABLES" = "iptables" ]; then
 		mkdir -p /tmp/ssrplus_save
 		run_mode="$(uci_get_by_type global run_mode)"
 		if [ "$run_mode" = "gfw" ]; then
@@ -3110,6 +3300,7 @@ stop() {
 		uci -q del "dhcp.@dnsmasq[0]._unused_ssrp_changed"
 		uci -q commit "dhcp"
 	fi
+	set_ipv6_dns_filter stop
 	if [ -f "$DNSMASQ_CONF_DIR/dnsmasq-ssrplus.conf" ]; then
 		rm -rf "$DNSMASQ_CONF_DIR/dnsmasq-ssrplus.conf" \
 			"$TMP_DNSMASQ_PATH" \

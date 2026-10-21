@@ -8,8 +8,8 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=luci-app-fakemesh
-PKG_VERSION:=1.0.2
-PKG_RELEASE:=1
+PKG_VERSION:=1.0.3
+PKG_RELEASE:=22
 
 PKG_LICENSE:=GPLv3
 PKG_LICENSE_FILES:=LICENSE
@@ -24,7 +24,8 @@ define Package/luci-app-fakemesh
 	SUBMENU:=Configuration Fake Mesh Support
 	TITLE:=LuCI Support for fakemesh
 	PKGARCH:=all
-	DEPENDS:=+jsonfilter +umdns +firewall4
+	DEPENDS:=+luci-base +lua +luci-lib-jsonc +luci-lib-nixio +libubus-lua \
+		+jsonfilter +umdns +firewall4 +@BUSYBOX_CONFIG_FLOCK
 endef
 
 define Package/luci-app-fakemesh/description
@@ -69,6 +70,8 @@ define Package/luci-app-fakemesh/install
 	$(INSTALL_BIN) ./root/etc/init.d/fakemesh $(1)/etc/init.d/fakemesh
 	$(INSTALL_DIR) $(1)/usr/sbin
 	$(INSTALL_BIN) ./root/usr/sbin/fakemesh $(1)/usr/sbin/fakemesh
+	$(INSTALL_DIR) $(1)/usr/libexec/rpcd
+	$(INSTALL_BIN) ./root/usr/libexec/rpcd/luci.fakemesh $(1)/usr/libexec/rpcd/luci.fakemesh
 	$(INSTALL_DIR) $(1)/etc/uci-defaults
 	$(INSTALL_DATA) ./root/etc/uci-defaults/40_luci-app-fakemesh $(1)/etc/uci-defaults/40_luci-app-fakemesh
 	$(INSTALL_DATA) ./root/etc/uci-defaults/96-fakemesh-defaults $(1)/etc/uci-defaults/96-fakemesh-defaults
@@ -81,7 +84,7 @@ define Package/luci-app-fakemesh/install
 	$(INSTALL_DIR) $(1)/usr/share/luci/menu.d
 	$(INSTALL_DATA) ./root/usr/share/luci/menu.d/*.json $(1)/usr/share/luci/menu.d/
 	$(INSTALL_DIR) $(1)/www/luci-static/resources/view/fakemesh
-	$(INSTALL_DATA) ./htdocs/luci-static/resources/view/fakemesh/fakemesh.js $(1)/www/luci-static/resources/view/fakemesh/fakemesh.js
+	$(INSTALL_DATA) ./htdocs/luci-static/resources/view/fakemesh/*.js $(1)/www/luci-static/resources/view/fakemesh/
 	$(INSTALL_DIR) $(1)/usr/share/ucitrack
 	$(INSTALL_DATA) ./root/usr/share/ucitrack/*.json $(1)/usr/share/ucitrack/
 endef

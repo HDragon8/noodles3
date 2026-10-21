@@ -121,12 +121,6 @@ msgstr "0 به معنای عدم استفاده است"
 msgid "Current node: %s"
 msgstr "گره فعلی: %s"
 
-msgid "Direct domain DNS routing"
-msgstr "مسیریابی مستقیم DNS دامنه"
-
-msgid "Please note that the program will not start if the format is incorrect!"
-msgstr "لطفا توجه داشته باشید که اگر قالب نادرست باشد، برنامه شروع نخواهد شد!"
-
 msgid "IP:Port mode acceptable, multi value split with english comma."
 msgstr "حالت IP:Port قابل قبول است، مقادیر متعدد را با کاما انگلیسی جدا کنید."
 
@@ -448,7 +442,7 @@ msgid "Failure Tolerance (%)"
 msgstr "تحمل شکست (%)"
 
 msgid "The maximum acceptable speed test failure rate. For example, 1 means allowing a 1% failure rate."
-msgstr "حداکثر نرخ شکست قابل قبول در تست سرعت. برای مثال، عدد ۱ به معنای مجاز بودن نرخ شکست ۱٪ است.
+msgstr "حداکثر نرخ شکست قابل قبول در تست سرعت. برای مثال، عدد ۱ به معنای مجاز بودن نرخ شکست ۱٪ است."
 
 msgid "Shunt"
 msgstr "شنت (Shunt)"
@@ -976,6 +970,9 @@ msgstr "گروه قوانین شنت"
 msgid "Please note attention to the priority, the higher the order, the higher the priority."
 msgstr "لطفاً به اولویت توجه کنید، هرچه ترتیب بالاتر باشد، اولویت بیشتر است."
 
+msgid "This ID already exists."
+msgstr "این شناسه از قبل وجود دارد."
+
 msgid "Update..."
 msgstr "به‌روزرسانی..."
 
@@ -1011,6 +1008,15 @@ msgstr "در حال انتقال..."
 
 msgid "App Update"
 msgstr "به‌روزرسانی برنامه"
+
+msgid "GitHub Proxy"
+msgstr "پروکسی معکوس GitHub"
+
+msgid "Use GitHub instead of proxy nodes for component updates."
+msgstr "برای بررسی و دانلود به‌روزرسانی اجزا، مستقیماً از سرویس پروکسی معکوس GitHub استفاده کنید، بدون عبور از گره‌های پروکسی."
+
+msgid "Close(Not use)"
+msgstr "خاموش (عدم استفاده)"
 
 msgid "if you want to run from memory, change the path, /tmp beginning then save the application and update it manually."
 msgstr "اگر می‌خواهید از حافظه اجرا کنید، مسیر را تغییر دهید، با /tmp شروع شود سپس برنامه را ذخیره و دستی به‌روزرسانی کنید."
@@ -1309,6 +1315,12 @@ msgstr "کلید خصوصی"
 msgid "Pre shared key"
 msgstr "کلید از پیش به اشتراک گذاشته شده"
 
+msgid "Allowed IPs"
+msgstr "آی‌پی‌های مجاز"
+
+msgid "Generate key"
+msgstr "کلید تولید کنید"
+
 msgid "Local Address"
 msgstr "آدرس محلی"
 
@@ -1381,24 +1393,6 @@ msgstr "<br />none: پیش‌فرض، بدون استتار، داده‌های 
 msgid "Use it together with the DNS disguised type. You can fill in any domain."
 msgstr "از آن همراه با نوع استتار DNS استفاده کنید. می‌توانید هر دامنه‌ای را وارد کنید."
 
-msgid "Auth"
-msgstr "احراز هویت"
-
-msgid "Socks for authentication"
-msgstr "Socks برای احراز هویت"
-
-msgid "Socks protocol authentication, support anonymous and password."
-msgstr "احراز هویت پروتکل Socks، پشتیبانی از ناشناس و رمز عبور."
-
-msgid "anonymous"
-msgstr "ناشناس"
-
-msgid "User Password"
-msgstr "رمز عبور کاربر"
-
-msgid "Username and Password must be used together!"
-msgstr "نام کاربری و رمز عبور باید با هم استفاده شوند!"
-
 msgid "Prefer firewall tools"
 msgstr "ترجیح ابزارهای فایروال"
 
@@ -1407,18 +1401,6 @@ msgstr "IPv6 TProxy"
 
 msgid "Experimental feature. Make sure that your node supports IPv6."
 msgstr "ویژگی آزمایشی. مطمئن شوید که گره شما از IPv6 پشتیبانی می‌کند."
-
-msgid "Status info"
-msgstr "اطلاعات وضعیت"
-
-msgid "Big icon"
-msgstr "آیکون بزرگ"
-
-msgid "Show node check"
-msgstr "نمایش بررسی گره"
-
-msgid "Show Show IP111"
-msgstr "نمایش نمایش IP111"
 
 msgid "Destination protocol"
 msgstr "پروتکل مقصد"
@@ -1453,6 +1435,12 @@ msgstr "اتصال محلی (Bind Local)"
 msgid "When selected, it can only be accessed localhost."
 msgstr "در صورت انتخاب، فقط از طریق localhost قابل دسترسی است."
 
+msgid "Firewall Allow"
+msgstr "فایروال مجاز است"
+
+msgid "Source zone"
+msgstr "منطقه منبع"
+
 msgid "Accept LAN Access"
 msgstr "پذیرش دسترسی شبکه داخلی (LAN)"
 
@@ -1474,17 +1462,26 @@ msgstr "پورت راه دور"
 msgid "as:"
 msgstr "به عنوان:"
 
-msgid "Public key absolute path"
-msgstr "مسیر مطلق کلید عمومی"
+msgid "Path to the certificate file"
+msgstr "مسیر فایل گواهی‌نامه"
 
-msgid "Private key absolute path"
-msgstr "مسیر مطلق کلید خصوصی"
+msgid "Path to the private key file"
+msgstr "مسیر فایل کلید خصوصی"
 
 msgid "Can't find this file!"
 msgstr "این فایل پیدا نشد!"
 
-msgid "Public key and Private key path can not be empty!"
-msgstr "مسیر کلید عمومی و کلید خصوصی نمی‌تواند خالی باشد!"
+msgid "Certificate and Private key path can not be empty!"
+msgstr "مسیر گواهی و کلید خصوصی نمی‌تواند خالی باشد!"
+
+msgid "Certificate and Private key PEM can not be empty!"
+msgstr "گواهی و کلید خصوصی PEM نمی‌توانند خالی باشند!"
+
+msgid "Use PEM"
+msgstr "از PEM استفاده کنید"
+
+msgid "Use certificate and private key PEM content."
+msgstr "از محتوای PEM گواهی و کلید خصوصی استفاده کنید."
 
 msgid "Server-Side"
 msgstr "سمت سرور"
@@ -1492,8 +1489,14 @@ msgstr "سمت سرور"
 msgid "Server Config"
 msgstr "پیکربندی سرور"
 
+msgid "Servers Manager"
+msgstr "مدیر سرورها"
+
 msgid "Users Manager"
 msgstr "مدیریت کاربران"
+
+msgid "User Config"
+msgstr "پیکربندی کاربر"
 
 msgid "Logs"
 msgstr "گزارش‌ها (Logs)"
@@ -1506,6 +1509,12 @@ msgstr "فعال‌سازی گزارش گره"
 
 msgid "Log Level"
 msgstr "سطح گزارش"
+
+msgid "Log File"
+msgstr "فایل لاگ"
+
+msgid "View Log"
+msgstr "مشاهده گزارش"
 
 msgid "Not enabled log"
 msgstr "گزارش فعال نیست"
@@ -1656,6 +1665,12 @@ msgstr "گواهی TLS (PEM)"
 
 msgid "Full certificate (chain), PEM format."
 msgstr "گواهی کامل (زنجیره‌ای)، فرمت PEM."
+
+msgid "TLS Private Key (PEM)"
+msgstr "کلید خصوصی TLS (PEM)"
+
+msgid "Private key in PEM format."
+msgstr "کلید خصوصی با فرمت PEM."
 
 msgid "Fetch Manually"
 msgstr "دریافت دستی"
@@ -1916,8 +1931,14 @@ msgstr "استفاده از پیکربندی سفارشی"
 msgid "Custom Config"
 msgstr "پیکربندی سفارشی"
 
+msgid "Must be Base64 text!"
+msgstr "متن باید Base64 باشد!"
+
 msgid "Must be JSON text!"
 msgstr "باید متن JSON باشد!"
+
+msgid "Must be UUID format!"
+msgstr "باید فرمت UUID باشه!"
 
 msgid "Geo View"
 msgstr "نمای Geo"
@@ -2156,8 +2177,8 @@ msgstr "پروکسی نکردن همه %s"
 msgid "Use the %s node [%s]"
 msgstr "استفاده از گره %s [%s]"
 
-msgid "Using a node that is different from the global configuration, DNS has been forcibly redirected to a dedicated DNS server."
-msgstr "استفاده از گره‌ای متفاوت از پیکربندی سراسری، DNS به اجبار به سرور DNS اختصاصی هدایت شده است."
+msgid "DNS will redirected to the dedicated DNS server [%s]."
+msgstr "DNS به سرور DNS اختصاصی [%s] هدایت خواهد شد."
 
 msgid "Add direct DNS to %s: %s"
 msgstr "افزودن DNS مستقیم به %s: %s"
@@ -2177,23 +2198,8 @@ msgstr "حذف قوانین %s کامل شد."
 msgid "%s firewall rules load complete!"
 msgstr "بارگذاری قوانین فایروال %s کامل شد!"
 
-msgid "Socks switch detection: Unknown error."
-msgstr "تشخیص سوئیچ Socks: خطای ناشناخته."
-
-msgid "Socks switch detection: Unable to connect to the network. Please check if the network is working properly!"
-msgstr "تشخیص سوئیچ Socks: عدم توانایی در اتصال به شبکه. لطفاً بررسی کنید که شبکه به درستی کار می‌کند!"
-
-msgid "Socks switch detection: Primary node 【%s: [%s]】 is normal. Switch to the primary node!"
-msgstr "تشخیص سوئیچ Socks: گره اولیه 【%s: [%s]】 عادی است. سوئیچ به گره اولیه!"
-
-msgid "Socks switch detection: %s node switch complete!"
-msgstr "تشخیص سوئیچ Socks: سوئیچ گره %s کامل شد!"
-
-msgid "Socks switch detection: %s 【%s:[%s]】 normal."
-msgstr "تشخیص سوئیچ Socks: %s 【%s:[%s]】 عادی است."
-
-msgid "switch to %s test detect!"
-msgstr "سوئیچ به تست تشخیص %s!"
+msgid "main node"
+msgstr "گره اصلی"
 
 msgid "backup node"
 msgstr "گره پشتیبان"
@@ -2201,17 +2207,41 @@ msgstr "گره پشتیبان"
 msgid "next backup node"
 msgstr "گره پشتیبان بعدی"
 
-msgid "main node"
-msgstr "گره اصلی"
+msgid "Socks switch detection: Port [%s] try %s [%s:%s]."
+msgstr "تشخیص تغییر وضعیت سوئیچ: پورت [%s]، تلاش %s [%s:%s]."
 
-msgid "Socks switch detection: Unknown error."
-msgstr "تشخیص سوئیچ Socks: خطای ناشناخته."
+msgid "Socks switch detection: Port [%s] [%s:[%s]] normal, switch to this node!"
+msgstr "تشخیص تغییر وضعیت سوکت‌ها: پورت [%s] [%s:[%s]] در وضعیت عادی است، تغییر وضعیت به این گره!"
 
-msgid "Socks switch detection: %s 【%s:[%s]】 abnormal, %s"
-msgstr "تشخیص سوئیچ Socks: %s 【%s:[%s]】 غیرعادی، %s"
+msgid "Socks switch detection: Port [%s] node switch complete!"
+msgstr "تشخیص تغییر وضعیت سوکت‌ها: تغییر وضعیت گره در پورت [%s] تکمیل شد!"
 
-msgid "Socks switch detection: %s 【%s:[%s]】 normal, switch to this node!"
-msgstr "تشخیص سوئیچ Socks: %s 【%s:[%s]】 عادی، سوئیچ به این گره!"
+msgid "Socks switch detection: Port [%s] [%s:[%s]] abnormal."
+msgstr "تشخیص وضعیت سوئیچ: پورت [%s] [%s:[%s]] غیرعادی است."
+
+msgid "Socks switch detection: Port [%s] all nodes are unavailable or switching failed!"
+msgstr "بررسی تغییر گره SOCKS: پورت [%s]، همه گره‌ها در دسترس نیستند یا تغییر گره ناموفق بود!"
+
+msgid "Socks switch detection: Port [%s] node switch failed, continue trying other nodes!"
+msgstr "بررسی تغییر گره SOCKS: پورت [%s]، تغییر گره ناموفق بود؛ تلاش با گره‌های دیگر ادامه دارد!"
+
+msgid "Socks switch detection: Port [%s] failed to restore the primary node!"
+msgstr "بررسی تغییر گره SOCKS: پورت [%s]، بازیابی گره اصلی ناموفق بود!"
+
+msgid "Socks switch detection: Port [%s] Unknown error."
+msgstr "تشخیص وضعیت سوئیچ جوراب: پورت [%s] خطای ناشناخته."
+
+msgid "Socks switch detection: Port [%s] Unable to connect to the network. Please check if the network is working properly!"
+msgstr "تشخیص تغییر وضعیت سوکت: پورت [%s]؛ امکان اتصال به شبکه وجود ندارد. لطفاً بررسی کنید که آیا شبکه به‌درستی کار می‌کند یا خیر."
+
+msgid "Socks switch detection: Port [%s] Primary node [%s: [%s]] is normal. Switch to the primary node!"
+msgstr "تشخیص تغییر وضعیت سوکت: وضعیت پورت [%s] و گره اصلی [%s: [%s]] عادی است. تغییر وضعیت به گره اصلی!"
+
+msgid "Socks switch detection: Port [%s] [%s:[%s]] normal."
+msgstr "تشخیص وضعیت سوئیچ: پورت [%s] [%s:[%s]] در وضعیت عادی است."
+
+msgid "Socks switch detection: Port [%s] Number of backup nodes: %s"
+msgstr "تشخیص سوئیچ سوئیچ شبکه: پورت [%s] تعداد گره‌های پشتیبان: %s"
 
 msgid "Restart dnsmasq service."
 msgstr "راه‌اندازی مجدد سرویس dnsmasq."
@@ -2228,11 +2258,26 @@ msgstr "ورودی %s:%s"
 msgid "Node: %s:%s, Weight: %s"
 msgstr "گره: %s:%s، وزن: %s"
 
-msgid "[Rule update] instance is running; please try again later."
-msgstr "نمونه [به‌روزرسانی قانون] در حال اجرا است؛ لطفاً بعداً دوباره امتحان کنید."
+msgid "Unable to open the subscription/rule update lock. Exiting."
+msgstr "باز کردن قفل به‌روزرسانی اشتراک/قوانین ممکن نشد. خروج."
 
-msgid "[Subscription] instance is running; [Rule Update] queue and wait."
-msgstr "نمونه [اشتراک] در حال اجرا است؛ [به‌روزرسانی قانون] در صف انتظار قرار می‌گیرد."
+msgid "A subscription or rule update is already running. Skipping this request."
+msgstr "به‌روزرسانی اشتراک یا قوانین در حال اجرا است. این درخواست نادیده گرفته می‌شود."
+
+msgid "Unable to acquire the update lock. Scheduled task failed."
+msgstr "دریافت قفل به‌روزرسانی ممکن نشد. وظیفه زمان‌بندی‌شده ناموفق بود."
+
+msgid "Subscription"
+msgstr "اشتراک"
+
+msgid "Rule Update"
+msgstr "به‌روزرسانی قوانین"
+
+msgid "Subscription/Rule Update"
+msgstr "به‌روزرسانی اشتراک/قوانین"
+
+msgid "[%s] is running; [%s] is queued and waiting..."
+msgstr "[%s] در حال اجرا است؛ [%s] در صف قرار گرفته و منتظر است..."
 
 msgid "Start updating the rules..."
 msgstr "شروع به‌روزرسانی قوانین..."
@@ -2330,6 +2375,9 @@ msgstr "صرف‌نظر از گره %s، زیرا گره‌های نوع %s به
 msgid "%s type node subscriptions are not currently supported, skip this node."
 msgstr "اشتراک‌های گره نوع %s در حال حاضر پشتیبانی نمی‌شوند، صرف‌نظر از این گره."
 
+msgid "Skipping %s node. This node URI format cannot be parsed."
+msgstr "از گره %s صرف‌نظر می‌شود. فرمت URI این گره قابل تجزیه نیست."
+
 msgid "Update [%s]"
 msgstr "به‌روزرسانی [%s]"
 
@@ -2381,14 +2429,17 @@ msgstr "گره [%s] با موفقیت حل شد، تعداد: %s"
 msgid "Get subscription content for [%s] is empty. This may be due to an invalid subscription address or a network problem. Please diagnose the issue!"
 msgstr "دریافت محتوای اشتراک برای [%s] خالی است. این ممکن است به دلیل آدرس اشتراک نامعتبر یا مشکل شبکه باشد. لطفاً مشکل را بررسی کنید!"
 
+msgid "No Proxy"
+msgstr "بدون پروکسی"
+
 msgid "Proxy"
 msgstr "پروکسی"
 
-msgid "[Subscription] instance is running; please try again later."
-msgstr "نمونه [اشتراک] در حال اجرا است؛ لطفاً بعداً دوباره امتحان کنید."
+msgid "Unable to acquire the stop lock. Exiting."
+msgstr "دریافت قفل توقف ممکن نشد. خروج."
 
-msgid "[Rule Update] instance is running; [Subscription] queue and wait."
-msgstr "نمونه [به‌روزرسانی قانون] در حال اجرا است؛ [اشتراک] در صف انتظار قرار دارد."
+msgid "Failed or timed out waiting for subscription/rule updates. Restart cancelled."
+msgstr "انتظار برای به‌روزرسانی اشتراک/قوانین ناموفق بود یا مهلت آن به پایان رسید. راه‌اندازی مجدد لغو شد."
 
 msgid "Start subscribing..."
 msgstr "شروع اشتراک‌گیری..."
@@ -2399,11 +2450,14 @@ msgstr "شروع اشتراک‌گیری: %s"
 msgid "Subscription: [%s] No changes, no update required."
 msgstr "اشتراک: [%s] بدون تغییر، نیازی به به‌روزرسانی نیست."
 
+msgid "Refresh subscription [%s] account usage and expiration information."
+msgstr "به‌روزرسانی اطلاعات میزان مصرف حساب و زمان انقضای اشتراک [%s]."
+
 msgid "[%s] Subscription failed. This could be due to an invalid subscription address or a network issue. Please diagnose the problem! [%s]"
 msgstr "[%s] اشتراک ناموفق بود. این می‌تواند به دلیل آدرس اشتراک نامعتبر یا مشکل شبکه باشد. لطفاً مشکل را بررسی کنید! [%s]"
 
-msgid "Error, restoring service."
-msgstr "خطا، بازیابی سرویس."
+msgid "An error occurred during subscription."
+msgstr "هنگام به‌روزرسانی اشتراک خطایی رخ داد."
 
 msgid "Subscription complete..."
 msgstr "اشتراک کامل شد..."
@@ -2420,6 +2474,9 @@ msgstr "اندازه بسته Gecko (دقیقه)"
 msgid "Gecko Packet Size (max)"
 msgstr "اندازه بسته Gecko (حداکثر)"
 
+msgid "Enable UPnP/NAT-PMP port mapping on your gateway to improve hole punching success."
+msgstr "برای بهبود موفقیت در پانچ کردن حفره، نگاشت پورت UPnP/NAT-PMP را روی گیت‌وی خود فعال کنید."
+
 msgid "valid time (hh:mm)"
 msgstr "زمان معتبر (ساعت:میلی‌متر)"
 
@@ -2428,3 +2485,42 @@ msgstr "غیرفعال کردن استفاده مجدد از TLS"
 
 msgid "Not Set"
 msgstr "تنظیم نشده"
+
+msgid "Cipher Suites"
+msgstr "سوئیت‌های رمزدار"
+
+msgid "Configures the list of supported cipher suites."
+msgstr "فهرست مجموعه‌های رمز پشتیبانی‌شده را پیکربندی می‌کند."
+
+msgid "This username already exists."
+msgstr "این نام کاربری از قبل وجود دارد."
+
+msgid "Update Options"
+msgstr "گزینه‌های به‌روزرسانی"
+
+msgid "MASQUE Path"
+msgstr "مسیر MASQUE"
+
+msgid "Custom HTTP Headers"
+msgstr "سرآیندهای سفارشی HTTP"
+
+msgid "MASQUE Address"
+msgstr "آدرس تونل MASQUE"
+
+msgid "WARP Device Private Key"
+msgstr "کلید خصوصی دستگاه WARP"
+
+msgid "WARP Endpoint Public Key"
+msgstr "کلید عمومی سرور WARP"
+
+msgid "Installing..."
+msgstr "در حال نصب..."
+
+msgid "Do not refresh or switch pages during installation."
+msgstr "در حین نصب، صفحه را بازخوانی نکنید و به صفحه دیگری نروید."
+
+msgid "Update failed"
+msgstr "به‌روزرسانی ناموفق بود"
+
+msgid "Unknown error"
+msgstr "خطای ناشناخته"

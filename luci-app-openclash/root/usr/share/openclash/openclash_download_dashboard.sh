@@ -57,7 +57,7 @@ EOF
    }
 
    log_unzip_error() {
-      LOG_OUT "Control Panel【$DASH_NAME - $DASH_TYPE】Unzip Error!" && SLOG_CLEAN
+      LOG_OUT "Control Panel【$DASH_NAME - $DASH_TYPE】Unzip Error!"
       cleanup_dashboard_tmp
       del_lock
       exit 2
@@ -72,20 +72,20 @@ EOF
    github_address_mod=$(uci_get_config "github_address_mod" || echo 0)
    if [ "$DASH_NAME" == "Dashboard" ]; then
       UNPACK_FILE_DIR="/usr/share/openclash/ui/dashboard/"
-		if [ "$DASH_TYPE" == "Official" ]; then
-			DOWNLOAD_PATH="https://codeload.github.com/ayanamist/clash-dashboard/zip/refs/heads/gh-pages"
+      if [ "$DASH_TYPE" == "Official" ]; then
+         DOWNLOAD_PATH="https://codeload.github.com/ayanamist/clash-dashboard/zip/refs/heads/gh-pages"
          FILE_PATH_INCLUDE="clash-dashboard-gh-pages"
       else
-			DOWNLOAD_PATH="https://codeload.github.com/MetaCubeX/Razord-meta/zip/refs/heads/gh-pages"
+         DOWNLOAD_PATH="https://codeload.github.com/MetaCubeX/Razord-meta/zip/refs/heads/gh-pages"
          FILE_PATH_INCLUDE="Razord-meta-gh-pages"
       fi
-	elif [ "$DASH_NAME" == "Yacd" ]; then
+   elif [ "$DASH_NAME" == "Yacd" ]; then
       UNPACK_FILE_DIR="/usr/share/openclash/ui/yacd/"
-		if [ "$DASH_TYPE" == "Official" ]; then
-			DOWNLOAD_PATH="https://codeload.github.com/haishanh/yacd/zip/refs/heads/gh-pages"
+      if [ "$DASH_TYPE" == "Official" ]; then
+         DOWNLOAD_PATH="https://codeload.github.com/haishanh/yacd/zip/refs/heads/gh-pages"
          FILE_PATH_INCLUDE="yacd-gh-pages"
       else
-			DOWNLOAD_PATH="https://codeload.github.com/MetaCubeX/Yacd-meta/zip/refs/heads/gh-pages"
+         DOWNLOAD_PATH="https://codeload.github.com/MetaCubeX/Yacd-meta/zip/refs/heads/gh-pages"
          FILE_PATH_INCLUDE="Yacd-meta-gh-pages"
       fi
   elif [ "$DASH_NAME" == "Zashboard" ]; then
@@ -94,9 +94,9 @@ EOF
       FILE_PATH_INCLUDE="zashboard-gh-pages-cdn-fonts"
    else
       UNPACK_FILE_DIR="/usr/share/openclash/ui/metacubexd/"
-		DOWNLOAD_PATH="https://codeload.github.com/MetaCubeX/metacubexd/zip/refs/heads/gh-pages"
+      DOWNLOAD_PATH="https://codeload.github.com/MetaCubeX/metacubexd/zip/refs/heads/gh-pages"
       FILE_PATH_INCLUDE="metacubexd-gh-pages"
-	fi
+   fi
    TARGET_FILE_DIR="${UNPACK_FILE_DIR%/}"
    TARGET_PARENT_DIR="$(dirname "$TARGET_FILE_DIR")"
    NEW_FILE_DIR="${TARGET_PARENT_DIR}/.openclash_dashboard_new.$$"
@@ -121,7 +121,7 @@ EOF
             fi
             if mv "$NEW_FILE_DIR" "$TARGET_FILE_DIR" >/dev/null 2>&1 && validate_dashboard_dir "$TARGET_FILE_DIR"; then
                cleanup_dashboard_tmp
-               LOG_OUT "Control Panel【$DASH_NAME - $DASH_TYPE】Download Successful!" && SLOG_CLEAN
+               LOG_OUT "Control Panel【$DASH_NAME - $DASH_TYPE】Download Successful!"
                del_lock
                exit 0
             else
@@ -137,7 +137,7 @@ EOF
    elif [ "$DOWNLOAD_RESULT" -eq 2 ]; then
       if validate_dashboard_dir "$UNPACK_FILE_DIR"; then
          cleanup_dashboard_tmp
-         LOG_OUT "Control Panel【$DASH_NAME - $DASH_TYPE】Download Successful!" && SLOG_CLEAN
+         LOG_OUT "Control Panel【$DASH_NAME - $DASH_TYPE】Download Successful!"
          del_lock
          exit 0
       else
@@ -145,7 +145,7 @@ EOF
       fi
    else
       cleanup_dashboard_tmp
-      LOG_OUT "Control Panel【$DASH_NAME - $DASH_TYPE】Download Error!" && SLOG_CLEAN
+      LOG_OUT "Control Panel【$DASH_NAME - $DASH_TYPE】Download Error!"
       del_lock
       exit 1
    fi

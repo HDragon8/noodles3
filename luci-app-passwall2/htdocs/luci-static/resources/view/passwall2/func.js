@@ -8,6 +8,11 @@ function arraysEqual(a, b) {
 	return true;
 }
 
+function isBase64(str) {
+	const base64Regex = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=|[A-Za-z0-9+/]{4})$/;
+	return base64Regex.test(str);
+}
+
 function decodeIfBase64(str) {
 	try {
 		let s = str.replace(/-/g, '+').replace(/_/g, '/');
@@ -24,6 +29,11 @@ function decodeIfBase64(str) {
 	return str;
 }
 
+function isUUID(str) {
+	const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+	return uuidRegex.test(str);
+}
+
 function waitForElement(selector, callback) {
 	const el = document.querySelector(selector);
 	if (el) return callback(el);
@@ -37,6 +47,11 @@ function waitForElement(selector, callback) {
 	observer.observe(document.body, { childList: true, subtree: true });
 }
 
+function waitForElementId(id, callback) {
+	waitForElement("#" + CSS.escape(id), callback);
+	//waitForElement('[id="' + id + '"]', callback);
+}
+
 function get_current_url() {
 	return window.location.origin + window.location.pathname;
 }
@@ -46,13 +61,10 @@ function getOption(config, section, opt) {
 	const id = `cbid.${config}.${section}.${opt}`;
 	obj = document.getElementsByName(id)[0] || document.getElementById(id);
 	if (obj) {
+		//lua luci combobox
 		const combobox = document.getElementById('cbi.combobox.' + id);
 		if (combobox) {
 			obj.combobox = combobox;
-		}
-		const div = document.getElementById(id);
-		if (div && div.getElementsByTagName("li").length > 0) {
-			obj = div;
 		}
 		return obj;
 	} else {

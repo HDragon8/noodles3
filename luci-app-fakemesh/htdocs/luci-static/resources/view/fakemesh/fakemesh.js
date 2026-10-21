@@ -12,7 +12,8 @@ return view.extend({
 		return Promise.all([
 			uci.changes(),
 			uci.load('fakemesh'),
-			uci.load('fakemeshac')
+			uci.load('fakemeshac'),
+			uci.load('wireless')
 		]);
 	},
 
@@ -33,6 +34,7 @@ return view.extend({
 
 		o = s.option(form.Value, 'id', _('Mesh ID'));
 		o.datatype = 'maxlength(32)';
+		o.rmempty = false;
 
 		o = s.option(form.Value, 'key', _('Key'), _('Leave empty if encryption is not required.'));
 		o.rmempty = true;
@@ -40,9 +42,18 @@ return view.extend({
 		o.datatype = 'wpakey';
 
 		o = s.option(form.ListValue, 'band', _('Band'));
+		o.value('6g', _('6G'));
 		o.value('5g', _('5G'));
 		o.value('2g', _('2G'));
 		o.default = '5g';
+		var available_bands = {};
+		uci.sections('wireless', 'wifi-device', function(radio) {
+			if (radio.band)
+				available_bands[radio.band] = true;
+		});
+		o.validate = function(section_id, value) {
+			return available_bands[value] ? true : _('No configured radio supports this backhaul band.');
+		};
 
 		o = s.option(form.ListValue, 'role', _('Role'), _('Use the gateway router as the controller and all other nodes as agents.'));
 		o.value('wap', _('Wired AP (Ethernet backhaul)'));
@@ -113,7 +124,10 @@ return view.extend({
 		if (current_role != 'controller') o.readonly = true;
 
 		o = s.option(form.ListValue, 'band', _('Band'));
+		o.value('2g5g6g', _('2G+5G+6G'));
 		o.value('2g5g', _('2G+5G'));
+		o.value('5g6g', _('5G+6G'));
+		o.value('6g', _('6G'));
 		o.value('5g', _('5G'));
 		o.value('2g', _('2G'));
 		o.default = '2g5g';
